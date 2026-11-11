@@ -282,7 +282,6 @@
           <div class="student-info">
             <div class="student-name-row">
               <span class="student-name">张立</span>
-              <span class="student-role-tag">研究生</span>
             </div>
             <div class="student-meta-row">
               <span>学号 202409012</span>
@@ -322,7 +321,6 @@
             <div class="section-title">
               <span>在架服务申办</span>
             </div>
-            <span class="section-subtitle">点击卡片在线选品填报</span>
           </div>
 
           <!-- 卡片 1：自产动物 -->
@@ -343,7 +341,6 @@
               </div>
             </div>
             <div class="service-clean-card__foot">
-              <span class="service-clean-hint">包含 3 项现货品规 · 整单出库</span>
               <button class="service-clean-btn btn-kind-internal">立即申办 ›</button>
             </div>
           </div>
@@ -365,7 +362,6 @@
               </div>
             </div>
             <div class="service-clean-card__foot">
-              <span class="service-clean-hint">包含 2 项入围集采品系 · 协议直供</span>
               <button class="service-clean-btn btn-kind-external">立即申办 ›</button>
             </div>
           </div>
@@ -387,7 +383,6 @@
               </div>
             </div>
             <div class="service-clean-card__foot">
-              <span class="service-clean-hint">包含 2 项笼位托管 · 动态按天计费</span>
               <button class="service-clean-btn btn-kind-breeding">立即申办 ›</button>
             </div>
           </div>

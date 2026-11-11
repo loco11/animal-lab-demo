@@ -162,7 +162,6 @@ export function mobilePage(host: HTMLElement): void {
               </div>
             </div>
             <div class="service-clean-card__foot">
-              <span class="service-clean-hint">包含 3 项现货品规 · 整单出库</span>
               <button class="service-clean-btn btn-kind-internal">立即申办 ›</button>
             </div>
           </div>
@@ -184,7 +183,6 @@ export function mobilePage(host: HTMLElement): void {
               </div>
             </div>
             <div class="service-clean-card__foot">
-              <span class="service-clean-hint">包含 2 项入围集采品系 · 协议直供</span>
               <button class="service-clean-btn btn-kind-external">立即申办 ›</button>
             </div>
           </div>
@@ -206,7 +204,6 @@ export function mobilePage(host: HTMLElement): void {
               </div>
             </div>
             <div class="service-clean-card__foot">
-              <span class="service-clean-hint">包含 2 项笼位托管 · 动态按天计费</span>
               <button class="service-clean-btn btn-kind-breeding">立即申办 ›</button>
             </div>
           </div>

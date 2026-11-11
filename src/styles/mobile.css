@@ -337,7 +337,7 @@
 .service-clean-card__foot {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   margin-top: 2px;
   padding-top: 6px;
 }
