@@ -1245,7 +1245,7 @@
 
 /* 遮罩层 */
 .mobile-picker-mask {
-  position: absolute;
+  position: fixed;
   inset: 0;
   background: rgba(15, 23, 42, 0.5);
   backdrop-filter: blur(2px);
@@ -1263,10 +1263,12 @@
 
 /* 抽屉弹层 */
 .mobile-picker-sheet {
-  position: absolute;
+  position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
+  max-width: 440px;
+  margin: 0 auto;
   background: #ffffff;
   border-radius: 20px 20px 0 0;
   z-index: 1001;

@@ -190,8 +190,8 @@ export function mobilePage(host: HTMLElement): void {
             <div class="service-clean-card__body">
               <h3 class="service-clean-title">屏障笼位饲养及托管</h3>
               <div class="service-item-chips">
-                <span class="service-item-chip"><strong>小鼠笼位饲养</strong>（SPF屏障独立通风IVC）</span>
-                <span class="service-item-chip"><strong>教学动物普通寄养</strong>（普通环境笼位）</span>
+                <span class="service-item-chip"><strong>小鼠笼位饲养服务</strong>（独立通风笼位）</span>
+                <span class="service-item-chip"><strong>教学动物寄养（服务大厅审批）</strong>（普通环境）</span>
               </div>
             </div>
             <div class="service-clean-card__foot">
@@ -295,18 +295,18 @@ export function mobilePage(host: HTMLElement): void {
     } else if (isBreeding) {
       serviceOptions = [
         {
-          id: 'cage-spf',
-          title: 'SPF级独立通风笼位（IVC）',
-          spec: 'SPF独立屏障，含全价垫料与饲料',
+          id: 'sv_animal_breed',
+          title: '小鼠笼位饲养服务',
+          spec: '独立通风笼位，含饲料垫料',
           priceFen: 1000,
           unit: '笼·天',
           badge: `${idleCages} 笼空闲`,
           badgeColor: '#7e22ce',
         },
         {
-          id: 'cage-normal',
-          title: '教学动物普通寄养',
-          spec: '普通环境笼位，按日计费',
+          id: 'sv_animal_breed_hall',
+          title: '教学动物寄养（服务大厅审批）',
+          spec: '普通环境笼位',
           priceFen: 800,
           unit: '笼·天',
           badge: '随时可入场',
@@ -682,7 +682,7 @@ export function mobilePage(host: HTMLElement): void {
         labId: 'animal',
         code: `AD-ORD-${String(data().orders.length + 1).padStart(4, '0')}`,
         kind,
-        serviceId: `sv_${kind}_${Date.now()}`,
+        serviceId: s.id,
         serviceName,
         itemName: serviceName.split('（')[0],
         spec,
