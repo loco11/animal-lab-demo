@@ -139,6 +139,13 @@ export interface Order {
   rejectReason?: string
   expectDate?: string
   remark?: string
+  /** 饲养预定业务扩展字段 */
+  feedDays?: number
+  animalCount?: number
+  recommendedCages?: number
+  iacucNo?: string
+  preFreezeAmountFen?: number
+  feeStatus?: 'frozen' | 'charged' | 'unpaid'
   createdAt: string
   updatedAt: string
   history: OrderEvent[]
@@ -329,6 +336,15 @@ export interface CageOccupancy {
 
 export type FeedingStatus = 'incoming' | 'breeding' | 'exited'
 
+export interface FeedingChangeLog {
+  at: string
+  action: string
+  note: string
+  operator?: string
+  beforeCages: number
+  afterCages: number
+}
+
 export interface Feeding {
   id: string
   labId: string
@@ -343,6 +359,7 @@ export interface Feeding {
   exitAt?: string
   exitReason?: string
   cageIds: string[]
+  changeLogs?: FeedingChangeLog[]
 }
 
 /* ---------------- 费用与学校扣费模拟 ---------------- */

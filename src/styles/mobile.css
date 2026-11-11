@@ -197,28 +197,12 @@
 }
 
 /* ==========================================================================
-   在架服务申办区域（极简卡片：中心名称、服务类型、包含品名）
+   服务入口卡片区域
    ========================================================================== */
 .service-section {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 2px;
-}
-
-.section-title {
-  font-size: 15px;
-  font-weight: 800;
-  color: #0f172a;
-  display: flex;
-  align-items: center;
-  gap: 6px;
 }
 
 /* 极简服务卡片 */
@@ -418,13 +402,6 @@
   gap: 2px;
 }
 
-.apply-nav-title {
-  font-size: 16px;
-  font-weight: 800;
-  color: #0f172a;
-  margin: 0;
-}
-
 .apply-nav-right {
   width: 48px;
 }
@@ -503,13 +480,13 @@
 }
 
 .apply-stock-inline {
+  color: #059669;
   font-size: 12px;
-  font-weight: 500;
-  color: #64748b;
+  font-weight: 600;
 }
 
-.apply-stock-inline span {
-  font-weight: 700;
+.apply-stock-inline.is-insufficient {
+  color: #dc2626;
 }
 
 .apply-label-hint {
@@ -1425,4 +1402,110 @@
   background-color: #2563eb;
   color: #ffffff;
 }
+
+/* ==========================================================================
+   饲养排位预订及动态调笼流水专用样式
+   ========================================================================== */
+.breeding-calc-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.breeding-calc-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: #475569;
+}
+
+.breeding-calc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #f3e8ff;
+  color: #7e22ce;
+  font-weight: 700;
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.breeding-notice-box {
+  background: #fefce8;
+  border: 1px solid #fef08a;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 11.5px;
+  color: #854d0e;
+  line-height: 1.6;
+}
+
+.breeding-notice-title {
+  font-weight: 700;
+  color: #713f12;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.breeding-cage-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  background: #ede9fe;
+  color: #6b21a8;
+  border-radius: 5px;
+  font-weight: 700;
+  font-size: 11px;
+  margin-right: 4px;
+}
+
+.breeding-change-notice {
+  margin-top: 10px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  padding: 9px 12px;
+}
+
+.breeding-change-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #166534;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.breeding-change-item {
+  font-size: 11px;
+  color: #15803d;
+  line-height: 1.5;
+  border-bottom: 1px dashed #bbf7d0;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+}
+
+.breeding-change-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin-bottom: 0;
+}
+
+.breeding-change-item .change-hint {
+  font-size: 10.5px;
+  color: #166534;
+  opacity: 0.88;
+  margin-top: 2px;
+}
+
 

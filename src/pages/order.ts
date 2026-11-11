@@ -334,6 +334,18 @@ export function openDetail(order: Order): void {
   if (order.kind === 'external' && extSupplierId) {
     items.push(['外购签约供货商', `${supplierName(extSupplierId)}（厂商直送）`])
   }
+  if (order.kind === 'breeding') {
+    if (order.animalCount) items.push(['拟养只数', `${order.animalCount} 只`])
+    if (order.feedDays) items.push(['拟饲养天数', `${order.feedDays} 天`])
+    if (order.recommendedCages) items.push(['测算推荐笼数', `${order.recommendedCages} 笼`])
+    if (order.iacucNo) items.push(['IACUC伦理编号', order.iacucNo])
+    if (order.preFreezeAmountFen) {
+      items.push([
+        '科研经费冻结',
+        `${moneyText(order.preFreezeAmountFen)}（${order.feeStatus === 'charged' ? '入住已正式扣缴·不退' : '已预先冻结'}）`,
+      ])
+    }
+  }
   items.push(
     [order.kind === 'external' ? '外部客户（不登录系统）' : '经费项目', customer ? customer.name : project?.name ?? '—'],
     ['审核方式', AUDIT_MODE_TEXT[order.auditMode]],

@@ -12,7 +12,7 @@ import {
   supplyUsagesOf,
   takeSupply,
 } from '../core/biz/feeding'
-import { listOrders } from '../core/biz/orders'
+import { listOrders, approveOrder } from '../core/biz/orders'
 import { categoryDef, categoryText } from '../core/biz/stock'
 import { auditPassed } from '../core/labels'
 import { data, scoped } from '../core/data'
@@ -116,7 +116,7 @@ function renderIncoming(host: HTMLElement): void {
   const toolbar = el('div', 'toolbar')
   toolbar.innerHTML = `
     <div class="toolbar__actions">
-      <span class="hint">待入场清单：当前共 <strong>${rows.length}</strong> 笔订单待核验并安排笼位入场</span>
+      <span class="hint">待入场清单：当前共 <strong>${rows.length}</strong> 笔饲养订单待审核排位及现场办理入笼（基础预付费用入场即扣且不可退）</span>
     </div>
   `
   host.appendChild(toolbar)
@@ -127,26 +127,51 @@ function renderIncoming(host: HTMLElement): void {
       cols: [
         { key: 'code', title: '订单编号', width: '130px' },
         { key: 'item', title: '服务 / 规格', render: (r) => `${r.itemName}｜${r.spec}` },
-        { key: 'quantity', title: '申请数量', align: 'right', width: '90px', render: (r) => `${r.quantity}${r.unit}` },
-        { key: 'applicant', title: '申请人 / 课题组', width: '160px', render: (r) => `👤 ${escapeHtml(r.applicantName)}<br><span style="font-size:11px;color:#64748b;">${escapeHtml(r.applicantOrg || '')}</span>` },
-        { key: 'expectDate', title: '期望入场', width: '110px', render: (r) => r.expectDate ?? '—' },
+        {
+          key: 'quantity',
+          title: '预订规模',
+          align: 'right',
+          width: '130px',
+          render: (r) =>
+            r.feedDays
+              ? `<strong>${r.quantity} 笼</strong><br><span style="font-size:11px;color:#64748b;">${r.animalCount || 20} 只 · ${r.feedDays} 天</span>`
+              : `${r.quantity}${r.unit}`,
+        },
+        {
+          key: 'applicant',
+          title: '申请人 / 课题组',
+          width: '160px',
+          render: (r) =>
+            `👤 ${escapeHtml(r.applicantName)}<br><span style="font-size:11px;color:#64748b;">${escapeHtml(r.applicantOrg || '')}</span>`,
+        },
+        {
+          key: 'feeStatus',
+          title: '经费状态',
+          width: '110px',
+          render: (r) =>
+            r.feeStatus === 'charged' ? tagHtml('已扣缴', 'success') : tagHtml('已冻结预付款', 'primary'),
+        },
         {
           key: 'audit',
-          title: '审核状态',
-          width: '90px',
-          render: (r) => (auditPassed(r.auditStatus) ? tagHtml('可入场', 'success') : tagHtml('待确认', 'warning')),
+          title: '排位审核',
+          width: '100px',
+          render: (r) => (auditPassed(r.auditStatus) ? tagHtml('已同意·待入住', 'success') : tagHtml('待排位审核', 'warning')),
         },
       ],
       rows,
       actions: (row) =>
-        [auditPassed(row.auditStatus) ? { text: '实际入场', act: 'entry' } : { text: '去订单确认', act: 'goto', disabled: false }] as RowAction[],
+        [
+          auditPassed(row.auditStatus)
+            ? { text: '办理现场入住', act: 'entry' }
+            : { text: '审核排位同意', act: 'approve' },
+        ] as RowAction[],
       queryActive: Object.values(view.filters).some(Boolean),
       emptyText: '没有待入场的饲养订单',
     },
     {
       onAction: (act, row) => {
         if (act === 'entry') runGuarded('feeding:entry', () => openEntry(row))
-        if (act === 'goto') toast('请先在订单管理中完成确认', 'warning')
+        if (act === 'approve') runGuarded('order:approve', () => showResult(approveOrder(row.id)))
       },
     },
   )
@@ -275,25 +300,31 @@ function renderFeedingTable(host: HTMLElement, rows: Feeding[]): void {
 function openEntry(order: Order): void {
   const cages = freeCages(todayStr())
   const bodyHtml =
-    `<div class="field"><span class="field__label">入场日期 *</span><input type="date" id="fd-entry-date" value="${todayStr()}" /></div>` +
-    '<p class="hint">只能选择当前实验室的空闲笼位（排除已停用、已占用）</p>' +
+    `<div style="margin-bottom:12px;font-size:12px;line-height:1.6;background:#f0fdf4;border:1px solid #bbf7d0;padding:10px 12px;border-radius:6px;color:#166534;">
+      <strong>💡 现场办理入住与扣缴规则：</strong><br>
+      ① <strong>真实起始日</strong>：办理当天（${todayStr()}）记为实验在养真实 Day 1。<br>
+      ② <strong>资金结转</strong>：现场办理入住即正式从科研项目划扣预付基础饲养费（<strong>不予退还</strong>）。<br>
+      ③ <strong>巡房合笼平衡</strong>：在养期间因合笼提前释放的笼位不退费，由中心线下补发等额饲料耗材。
+    </div>` +
+    `<div class="field"><span class="field__label">实际入场日期（Day 1） *</span><input type="date" id="fd-entry-date" value="${todayStr()}" /></div>` +
+    `<p class="hint">请核验动物数量及健康状况，勾选分配给该课题组的空闲物理笼位（建议按申请分配 ${order.quantity} 笼）：</p>` +
     (cages.length
       ? `<div class="table-wrap"><table><tbody>${cages
           .map(
             (c) =>
-              `<tr><td style="width:50px"><input type="checkbox" value="${c.id}" data-cage="${c.id}" /></td><td>${c.code}</td><td>${c.room}｜${c.env}</td><td>${c.capacity} 只/笼</td></tr>`,
+              `<tr><td style="width:50px"><input type="checkbox" value="${c.id}" data-cage="${c.id}" /></td><td><strong>${c.code}</strong></td><td>${c.room}｜${c.env}</td><td>${c.capacity} 只/笼</td></tr>`,
           )
           .join('')}</tbody></table></div>`
       : '<div class="state-area"><p class="state-area__text">没有可用空闲笼位</p></div>')
 
   const dlg = openDialog({
-    title: `饲养入场 ${order.code}`,
+    title: `办理现场入住与分配物理笼位 ${order.code}`,
     bodyHtml,
     wide: true,
     actions: [
       { text: '取消' },
       {
-        text: '确认入场',
+        text: '确认入场并正式扣款',
         primary: true,
         keepOpen: true,
         onClick: () => {

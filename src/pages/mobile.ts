@@ -9,7 +9,7 @@
 import { data, updateData } from '../core/data'
 import { KIND_INITIAL_FULFILL } from '../core/labels'
 import { notify } from '../core/store'
-import { moneyText, todayStr, uid } from '../core/utils'
+import { escapeHtml, moneyText, todayStr, uid } from '../core/utils'
 import type { Order, OrderKind } from '../types'
 import { el, toast } from '../ui'
 
@@ -18,16 +18,13 @@ const ICON_HOME = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 const ICON_ORDER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`
 const ICON_USER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`
 
-export function mobilePage(host: HTMLElement): void {
-  // 当前视图：'home' (首页) | 'orders' (我的订单) | 'apply' (独立服务申办页)
-  let currentView: 'home' | 'orders' | 'apply' = 'home'
-  // 当前申办的服务类型
-  let currentApplyKind: OrderKind = 'internal'
-  // 订单筛选过滤
-  let orderFilter: 'all' | 'pending' | 'processing' | 'breeding' | 'completed' = 'all'
-  // 记录展开详情的订单 ID
-  const expandedOrderIds = new Set<string>()
+// 当前移动端全局状态（模块级持久化，在 notify/rerender 时保持用户所在视图）
+let currentView: 'home' | 'orders' | 'apply' = 'home'
+let currentApplyKind: OrderKind = 'internal'
+let orderFilter: 'all' | 'pending' | 'processing' | 'breeding' | 'completed' = 'all'
+const expandedOrderIds = new Set<string>()
 
+export function mobilePage(host: HTMLElement): void {
   const stage = el('div', 'mobile-view-stage')
 
   function render(): void {
@@ -136,21 +133,15 @@ export function mobilePage(host: HTMLElement): void {
           </div>
         </section>
 
-        <!-- 服务入口卡片区（极简版：展示服务类型、包含服务名称、所属中心/学院名称） -->
+        <!-- 服务入口卡片区 -->
         <section class="service-section">
-          <div class="section-header">
-            <div class="section-title">
-              <span>在架服务申办</span>
-            </div>
-          </div>
-
           <!-- 卡片 1：自产动物 -->
           <div class="service-clean-card" id="card-apply-internal">
             <div class="service-clean-card__head">
               <span class="service-clean-kind-badge badge-kind-internal">自产动物</span>
               <div class="service-clean-center">
                 <span class="service-clean-center__dot" style="background:#16a34a;"></span>
-                基础医学院
+                实验动物中心
               </div>
             </div>
             <div class="service-clean-card__body">
@@ -172,7 +163,7 @@ export function mobilePage(host: HTMLElement): void {
               <span class="service-clean-kind-badge badge-kind-external">外购代采</span>
               <div class="service-clean-center">
                 <span class="service-clean-center__dot" style="background:#2563eb;"></span>
-                药学院
+                分析测试中心
               </div>
             </div>
             <div class="service-clean-card__body">
@@ -193,7 +184,7 @@ export function mobilePage(host: HTMLElement): void {
               <span class="service-clean-kind-badge badge-kind-breeding">饲养寄养</span>
               <div class="service-clean-center">
                 <span class="service-clean-center__dot" style="background:#9333ea;"></span>
-                公共卫生学院
+                实验动物中心
               </div>
             </div>
             <div class="service-clean-card__body">
@@ -249,10 +240,8 @@ export function mobilePage(host: HTMLElement): void {
   function renderApplyPage(slot: HTMLElement, kind: OrderKind): void {
     const isInternal = kind === 'internal'
     const isBreeding = kind === 'breeding'
-    const pageTitle = isInternal ? '校内自产实验动物申购' : isBreeding ? '屏障笼位饲养及托管预约' : '外购特种实验动物申购'
 
     // 获取底层实时数据
-    const stockItems = data().stockItems
     const cages = data().cages
     const idleCages = cages.filter((c) => c.status === 'free').length
 
@@ -366,8 +355,8 @@ export function mobilePage(host: HTMLElement): void {
 
     // 3. 校区数据源（外购）
     const campusOptions = [
-      { id: 'campus_1', title: '贵医大云漫湖校区实验动物中心', desc: 'SPF屏障实验楼（新校区）' },
-      { id: 'campus_2', title: '贵医大北京路校区实验动物中心', desc: '老校区动物楼实验区' },
+      { id: 'campus_1', title: '花溪校区' },
+      { id: 'campus_2', title: '甲秀校区' },
     ]
 
     // 当前选中的选项 ID
@@ -392,7 +381,6 @@ export function mobilePage(host: HTMLElement): void {
           <div class="apply-nav-back" id="apply-btn-back">
             <span>‹ 返回首页</span>
           </div>
-          <h2 class="apply-nav-title">${pageTitle}</h2>
           <div class="apply-nav-right"></div>
         </div>
 
@@ -410,29 +398,47 @@ export function mobilePage(host: HTMLElement): void {
               </div>
             </div>
 
-            <!-- 字段 2：数量 / 天数（用户要求：实时库存展示在申购数量右侧） -->
+            <!-- 字段 2：数量 / 天数 -->
             ${
               isBreeding
                 ? `
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
                 <div class="apply-field">
-                  <label class="apply-label">
-                    <span>预约笼位数（笼）</span>
-                    <span class="apply-stock-inline" id="apply-stock-inline"></span>
-                  </label>
-                  <input type="number" class="apply-input" id="apply-quantity" value="2" min="1" max="20" />
+                  <label class="apply-label">拟饲养动物（只）</label>
+                  <input type="number" class="apply-input" id="apply-animal-count" value="20" min="1" max="200" />
                 </div>
                 <div class="apply-field">
-                  <label class="apply-label">预估天数（天）</label>
-                  <input type="number" class="apply-input" id="apply-days" value="14" min="1" max="90" />
+                  <label class="apply-label">拟饲养天数（天）</label>
+                  <input type="number" class="apply-input" id="apply-days" value="14" min="1" max="180" />
                 </div>
+              </div>
+
+              <!-- 系统智能测算推荐笼位 -->
+              <div class="breeding-calc-card">
+                <div class="breeding-calc-row">
+                  <span>国标饲养密度：小鼠 ≤ 5只/笼</span>
+                  <span class="breeding-calc-badge" id="breeding-calc-badge">推荐 4 笼</span>
+                </div>
+                <div class="breeding-calc-row" style="margin-top:2px;">
+                  <span style="font-weight:600;color:#0f172a;">实际预订笼位（笼）：</span>
+                  <div style="display:inline-flex;align-items:center;gap:6px;">
+                    <input type="number" class="apply-input" id="apply-quantity" value="4" min="1" max="50" style="width:72px;height:36px;text-align:center;font-weight:700;" />
+                    <span style="font-size:12px;color:#64748b;">笼</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- IACUC 伦理审批编号 -->
+              <div class="apply-field" style="margin-top:10px;">
+                <label class="apply-label">IACUC 实验动物伦理审批编号</label>
+                <input type="text" class="apply-input" id="apply-iacuc" value="GZMU-IACUC-2026-088" placeholder="如：GZMU-IACUC-2026-088" />
               </div>
             `
                 : `
               <div class="apply-field">
                 <label class="apply-label">
                   <span>申购数量（只）</span>
-                  <span class="apply-stock-inline" id="apply-stock-inline"></span>
+                  ${isInternal ? '<span class="apply-stock-inline" id="apply-stock-inline"></span>' : ''}
                 </label>
                 <input type="number" class="apply-input" id="apply-quantity" value="20" min="1" max="100" />
               </div>
@@ -479,19 +485,36 @@ export function mobilePage(host: HTMLElement): void {
                 id="apply-remark"
                 rows="3"
                 placeholder="请输入实验用途或课题说明..."
-              >用于中草药活性分子抗肿瘤药效体内模型实验，已取得伦理审查批件</textarea>
+              ></textarea>
             </div>
+
+            <!-- 字段 6：中心饲养管理与扣款须知（仅饲养） -->
+            ${
+              isBreeding
+                ? `
+              <div class="breeding-notice-box" style="margin-top:12px;">
+                <div class="breeding-notice-title">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                  中心屏障笼位排位与费用扣缴规则
+                </div>
+                <div>1. <strong>真实起始日</strong>：起始日期无需预选，以动物到校后中心实验师现场办理核验入笼当天为准（Day 1）。</div>
+                <div>2. <strong>经费预划扣</strong>：提交即预冻结课题经费；现场办理入场正式划扣后基础预付款不退。</div>
+                <div>3. <strong>巡房合笼调整</strong>：因死亡/合笼提前释放的笼位不退款，由中心线下补发等额全价饲料耗材平衡。</div>
+              </div>
+            `
+                : ''
+            }
           </div>
         </div>
 
         <!-- 底部吸底提交栏 -->
         <div class="apply-sticky-bar">
           <div class="apply-total-info">
-            <span class="apply-total-label">预估划转总额</span>
+            <span class="apply-total-label">${isBreeding ? '预估冻结总额' : '预估划转总额'}</span>
             <span class="apply-total-price" id="apply-total-price">¥ 0.00</span>
           </div>
           <button class="apply-submit-btn" id="apply-btn-submit">
-            <span>确认提交申办</span>
+            <span>${isBreeding ? '提交排位预订申请' : '确认提交申办'}</span>
             <span style="margin-left:4px;">→</span>
           </button>
         </div>
@@ -509,6 +532,9 @@ export function mobilePage(host: HTMLElement): void {
 
     const qtyInput = slot.querySelector('#apply-quantity') as HTMLInputElement
     const daysInput = slot.querySelector('#apply-days') as HTMLInputElement | null
+    const animalCountInput = slot.querySelector('#apply-animal-count') as HTMLInputElement | null
+    const calcBadge = slot.querySelector('#breeding-calc-badge') as HTMLElement | null
+    const iacucInput = slot.querySelector('#apply-iacuc') as HTMLInputElement | null
     const stockInline = slot.querySelector('#apply-stock-inline') as HTMLElement | null
     const totalPriceEl = slot.querySelector('#apply-total-price') as HTMLElement
 
@@ -532,7 +558,7 @@ export function mobilePage(host: HTMLElement): void {
       }
       const c = curCampus()
       if (campusTriggerText) {
-        campusTriggerText.textContent = `${c.title} (${c.desc})`
+        campusTriggerText.textContent = c.title
       }
     }
 
@@ -541,30 +567,27 @@ export function mobilePage(host: HTMLElement): void {
       syncTriggerViews()
       const s = curService()
       const price = s.priceFen
-      const stockId = s.stockItemId
-      const qty = parseInt(qtyInput?.value || '1', 10) || 1
-      const days = daysInput ? parseInt(daysInput.value || '1', 10) || 1 : 1
 
-      // 1. 实时库存展示（位于申购数量右侧）
-      if (stockInline) {
-        if (isInternal && stockId) {
-          const item = stockItems.find((it) => it.id === stockId)
-          const count = item ? item.quantity : 0
-          if (count < qty) {
-            stockInline.innerHTML = `实时库存：<span style="color:#dc2626;font-weight:700;">${count}</span> 只 <span style="font-size:11px;color:#dc2626;">(不足)</span>`
-          } else {
-            stockInline.innerHTML = `实时库存：<span style="color:#059669;font-weight:700;">${count}</span> 只`
-          }
-        } else if (isBreeding) {
-          stockInline.innerHTML = `实时库存：<span style="color:#7e22ce;font-weight:700;">${idleCages}</span> 笼`
-        } else {
-          stockInline.innerHTML = `实时库存：<span style="color:#2563eb;font-weight:700;">协议充足</span>`
+      if (isBreeding) {
+        const count = parseInt(animalCountInput?.value || '20', 10) || 20
+        const rec = Math.ceil(count / 5)
+        if (calcBadge) {
+          calcBadge.textContent = `推荐 ${rec} 笼`
         }
+        const cages = parseInt(qtyInput?.value || String(rec), 10) || rec
+        const days = daysInput ? parseInt(daysInput.value || '14', 10) || 14 : 14
+        const totalFen = price * cages * days
+        totalPriceEl.textContent = moneyText(totalFen)
+      } else {
+        const qty = parseInt(qtyInput?.value || '1', 10) || 1
+        if (stockInline && s.stockItemId) {
+          const stock = data().stockItems.find((item) => item.id === s.stockItemId)?.quantity ?? 0
+          stockInline.textContent = `实时库存：${stock} 只`
+          stockInline.classList.toggle('is-insufficient', stock < qty)
+        }
+        const totalFen = price * qty
+        totalPriceEl.textContent = moneyText(totalFen)
       }
-
-      // 2. 实时总价计算（自动根据学生提交的数量生成金额）
-      const totalFen = isBreeding ? price * qty * days : price * qty
-      totalPriceEl.textContent = moneyText(totalFen)
     }
 
     // 绑定品规选择抽屉
@@ -616,7 +639,6 @@ export function mobilePage(host: HTMLElement): void {
         options: campusOptions.map((c) => ({
           id: c.id,
           title: c.title,
-          sub: c.desc,
         })),
         selectedId: selectedCampusId,
         onSelect: (item) => {
@@ -626,8 +648,14 @@ export function mobilePage(host: HTMLElement): void {
       })
     })
 
-    qtyInput.addEventListener('input', updateStockAndPrice)
+    qtyInput?.addEventListener('input', updateStockAndPrice)
     daysInput?.addEventListener('input', updateStockAndPrice)
+    animalCountInput?.addEventListener('input', () => {
+      const count = parseInt(animalCountInput.value || '20', 10) || 20
+      const rec = Math.max(1, Math.ceil(count / 5))
+      if (qtyInput) qtyInput.value = String(rec)
+      updateStockAndPrice()
+    })
     updateStockAndPrice()
 
     // 确认提交申办
@@ -639,9 +667,15 @@ export function mobilePage(host: HTMLElement): void {
       const stockItemId = s.stockItemId
       const supplierId = s.supplierId
       const unit = s.unit
-      const qty = parseInt(qtyInput.value || '10', 10)
+      const isBreeding = kind === 'breeding'
+      const animalCount = isBreeding ? (parseInt(animalCountInput?.value || '20', 10) || 20) : undefined
+      const recCages = isBreeding ? Math.max(1, Math.ceil((animalCount || 20) / 5)) : undefined
+      const qty = parseInt(qtyInput.value || (isBreeding ? String(recCages) : '10'), 10)
+      const feedDays = isBreeding && daysInput ? (parseInt(daysInput.value || '14', 10) || 14) : undefined
+      const iacucNo = isBreeding ? (iacucInput?.value?.trim() || 'GZMU-IACUC-2026-088') : undefined
+      const totalFen = isBreeding ? price * qty * (feedDays || 14) : price * qty
       const projectId = selectedProjectId
-      const remark = remarkArea?.value || '科研实验用途'
+      const remark = remarkArea?.value || (isBreeding ? 'SPF屏障笼位饲养及实验观测' : '科研实验用途')
 
       const newOrder: Order = {
         id: uid('ord'),
@@ -665,17 +699,38 @@ export function mobilePage(host: HTMLElement): void {
         applicantOrg: '基础医学院中药药理课题组',
         projectId,
         remark,
+        animalCount,
+        feedDays,
+        recommendedCages: recCages,
+        iacucNo,
+        preFreezeAmountFen: totalFen,
+        feeStatus: isBreeding ? 'frozen' : undefined,
         createdAt: todayStr(),
         updatedAt: todayStr(),
-        history: [{ at: todayStr(), actor: '张立（研究生）', action: '通过移动端提交申办', note: remark }],
+        history: [
+          {
+            at: todayStr(),
+            actor: '张立（研究生）',
+            action: isBreeding ? '通过移动端提交笼位排位预订' : '通过移动端提交申办',
+            note: isBreeding
+              ? `拟养 ${animalCount} 只动物（推荐 ${recCages} 笼，实际预订 ${qty} 笼），拟饲养 ${feedDays} 天，已预冻结项目经费 ¥${(totalFen / 100).toFixed(2)}`
+              : remark,
+          },
+        ],
       }
+
+      currentView = 'orders'
+      orderFilter = 'all'
+      expandedOrderIds.add(newOrder.id)
 
       updateData((d) => ({ ...d, orders: [...d.orders, newOrder] }))
       notify()
-      toast('申办已成功提交！已流转至实验动物中心待办', 'success')
-      currentView = 'orders'
-      orderFilter = 'all'
-      render()
+      toast(
+        isBreeding
+          ? `排位预订已提交！已预冻结经费 ¥${(totalFen / 100).toFixed(2)}，待中心实验师审核排位`
+          : '申办已成功提交！已流转至实验动物中心待办',
+        'success',
+      )
       window.scrollTo(0, 0)
     })
   }
@@ -743,39 +798,75 @@ export function mobilePage(host: HTMLElement): void {
 
     filteredOrders.forEach((o) => {
       const isExpanded = expandedOrderIds.has(o.id)
+      const feeding = data().feedings.find((f) => f.orderId === o.id)
+      const occupiedCages = feeding
+        ? data().cages.filter((c) => feeding.cageIds.includes(c.id)).map((c) => c.code)
+        : []
 
       let statusBadgeClass = 'order-status-pill--done'
       let statusText = '已完成'
       let statusHint = '已整单出库交付'
 
-      if (o.auditStatus === 'pending') {
-        statusBadgeClass = 'order-status-pill--pending'
-        statusText = '审核中'
-        statusHint = '实验师李建国待审核'
-      } else if (o.fulfillStatus === 'pending_out') {
-        statusBadgeClass = 'order-status-pill--processing'
-        statusText = '待出库'
-        statusHint = '中心仓库整单配发中'
-      } else if (o.fulfillStatus === 'sent') {
-        statusBadgeClass = 'order-status-pill--processing'
-        statusText = '采购中'
-        statusHint = '已向入围厂商汇总集采'
-      } else if (o.fulfillStatus === 'breeding') {
-        statusBadgeClass = 'order-status-pill--done'
-        statusText = '在养中'
-        statusHint = 'SPF独立通风笼位动态计费'
-      } else if (o.fulfillStatus === 'completed') {
-        statusBadgeClass = 'order-status-pill--done'
-        statusText = '可领取'
-        statusHint = '请持办件单号至中心交接'
-      } else if (o.fulfillStatus === 'exited') {
-        statusBadgeClass = 'order-status-pill--done'
-        statusText = '已结项'
-        statusHint = '已完成退出，费用划转结清'
+      if (o.kind === 'breeding') {
+        if (o.auditStatus === 'pending') {
+          statusBadgeClass = 'order-status-pill--pending'
+          statusText = '待中心排位'
+          const preFreezeYuan = (
+            (o.preFreezeAmountFen || o.unitPriceFen * o.quantity * (o.feedDays || 14)) /
+            100
+          ).toFixed(2)
+          statusHint = `已预冻结经费 ¥${preFreezeYuan} ｜ 待实验师李建国审核排位`
+        } else if (o.fulfillStatus === 'incoming') {
+          statusBadgeClass = 'order-status-pill--processing'
+          statusText = '已同意·待入场'
+          statusHint = '中心排位已通过 ｜ 动物到校后请前往屏障交接区办理现场核验入笼'
+        } else if (o.fulfillStatus === 'breeding') {
+          statusBadgeClass = 'order-status-pill--done'
+          statusText = '在养中'
+          statusHint = `物理笼位已分配：${occupiedCages.join('、') || '分配中'}（共 ${feeding ? feeding.cageIds.length : o.quantity} 笼）`
+        } else if (o.fulfillStatus === 'exited') {
+          statusBadgeClass = 'order-status-pill--done'
+          statusText = '已退场'
+          statusHint = '已完成实验退场，物理笼位已释放归档'
+        }
+      } else {
+        if (o.auditStatus === 'pending') {
+          statusBadgeClass = 'order-status-pill--pending'
+          statusText = '审核中'
+          statusHint = '实验师李建国待审核'
+        } else if (o.fulfillStatus === 'pending_out') {
+          statusBadgeClass = 'order-status-pill--processing'
+          statusText = '待出库'
+          statusHint = '中心仓库整单配发中'
+        } else if (o.fulfillStatus === 'sent') {
+          statusBadgeClass = 'order-status-pill--processing'
+          statusText = '采购中'
+          statusHint = '已向入围厂商汇总集采'
+        } else if (o.fulfillStatus === 'breeding') {
+          statusBadgeClass = 'order-status-pill--done'
+          statusText = '在养中'
+          statusHint = 'SPF独立通风笼位动态计费'
+        } else if (o.fulfillStatus === 'completed') {
+          statusBadgeClass = 'order-status-pill--done'
+          statusText = '可领取'
+          statusHint = '请持办件单号至中心交接'
+        } else if (o.fulfillStatus === 'exited') {
+          statusBadgeClass = 'order-status-pill--done'
+          statusText = '已结项'
+          statusHint = '已完成退出，费用划转结清'
+        }
       }
 
-      const isApproved = o.auditStatus === 'approved' || o.fulfillStatus === 'completed' || o.fulfillStatus === 'sent' || o.fulfillStatus === 'breeding'
-      const isFulfilled = o.fulfillStatus === 'completed' || o.fulfillStatus === 'sent' || o.fulfillStatus === 'breeding' || o.fulfillStatus === 'exited'
+      const isApproved =
+        o.auditStatus === 'approved' ||
+        o.fulfillStatus === 'completed' ||
+        o.fulfillStatus === 'sent' ||
+        o.fulfillStatus === 'breeding'
+      const isFulfilled =
+        o.fulfillStatus === 'completed' ||
+        o.fulfillStatus === 'sent' ||
+        o.fulfillStatus === 'breeding' ||
+        o.fulfillStatus === 'exited'
 
       const card = el('div', 'order-item-card')
       card.innerHTML = `
@@ -786,9 +877,62 @@ export function mobilePage(host: HTMLElement): void {
 
         <div class="order-item-card__body">
           <h4 class="order-item-card__title">${o.serviceName}</h4>
-          <div class="order-item-card__meta">品规数量：${o.spec} × <strong>${o.quantity} ${o.unit}</strong></div>
-          <div class="order-item-card__meta">课题经费：${o.projectId ? '已关联科研项目划转' : '国自然专项'}</div>
-          <div class="order-item-card__meta" style="color:#059669;font-weight:600;margin-top:2px;">状态说明：${statusHint}</div>
+          ${
+            o.kind === 'breeding'
+              ? `
+            <div class="order-item-card__meta">
+              预订规模：拟养 <strong>${o.animalCount || 20} 只</strong> ➔ 预订 <strong>${o.quantity} 笼</strong> · 拟养 <strong>${o.feedDays || 14} 天</strong>
+            </div>
+            <div class="order-item-card__meta">IACUC 伦理：${escapeHtml(o.iacucNo || 'GZMU-IACUC-2026-088')}</div>
+            <div class="order-item-card__meta">
+              课题经费：${o.projectId ? '已关联科研项目直接划转' : '基础医学院中药药理课题组'}
+              <span style="font-size:11px;color:${o.feeStatus === 'charged' ? '#059669' : '#d97706'};font-weight:600;margin-left:4px;">
+                (${o.feeStatus === 'charged' ? '基础预付已正式划扣·不退' : '经费已预冻结'})
+              </span>
+            </div>
+            ${
+              o.fulfillStatus === 'breeding' && feeding
+                ? `
+              <div style="margin-top:6px;padding:8px 10px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;font-size:11.5px;">
+                <div style="color:#0f172a;font-weight:700;">🏠 屏障现场在养信息：</div>
+                <div style="margin-top:2px;color:#475569;">
+                  入场办理日：<strong>${feeding.entryAt || o.createdAt}</strong>（真实起始日） ｜ 预订天数：${o.feedDays || 14} 天
+                </div>
+                <div style="margin-top:2px;color:#7e22ce;font-weight:600;">
+                  分配物理笼位：${occupiedCages.map((c) => `<span class="breeding-cage-tag">${c}</span>`).join('') || '已就绪'}
+                </div>
+              </div>
+              ${
+                feeding.changeLogs && feeding.changeLogs.length > 0
+                  ? `
+                <div class="breeding-change-notice">
+                  <div class="breeding-change-title">🔔 笼位变更通知流水（${feeding.changeLogs.length}次）</div>
+                  ${feeding.changeLogs
+                    .map(
+                      (log) => `
+                    <div class="breeding-change-item">
+                      <div style="font-weight:700;">${log.at} · ${log.action}</div>
+                      <div>变动明细：在养笼数 ${log.beforeCages} ➔ ${log.afterCages} 笼 ｜ 原因：${escapeHtml(log.note)}</div>
+                      <div class="change-hint">💡 费用说明：期初基础费用不退，提前合笼释放笼位由中心线下补发等额饲料耗材平衡</div>
+                    </div>
+                  `,
+                    )
+                    .join('')}
+                </div>
+              `
+                  : ''
+              }
+            `
+                : ''
+            }
+            <div class="order-item-card__meta" style="color:#059669;font-weight:600;margin-top:4px;">状态说明：${statusHint}</div>
+          `
+              : `
+            <div class="order-item-card__meta">品规数量：${o.spec} × <strong>${o.quantity} ${o.unit}</strong></div>
+            <div class="order-item-card__meta">课题经费：${o.projectId ? '已关联科研项目划转' : '国自然专项'}</div>
+            <div class="order-item-card__meta" style="color:#059669;font-weight:600;margin-top:2px;">状态说明：${statusHint}</div>
+          `
+          }
         </div>
 
         <div class="order-item-card__foot">
@@ -803,26 +947,45 @@ export function mobilePage(host: HTMLElement): void {
             <div class="timeline-step is-done">
               <div class="timeline-step__dot"></div>
               <div>
-                <div class="timeline-step__title">申请人在线填报</div>
-                <div class="timeline-step__desc">${o.createdAt} · 手机端在线提交 · 关联科研项目经费</div>
+                <div class="timeline-step__title">${o.kind === 'breeding' ? '学生提交排位预订' : '申请人在线填报'}</div>
+                <div class="timeline-step__desc">${o.createdAt} · 手机端在线提交 · ${o.kind === 'breeding' ? `拟养 ${o.animalCount || 20} 只/预订 ${o.quantity} 笼/${o.feedDays || 14} 天 · 预冻结项目经费` : '关联科研项目经费'}</div>
               </div>
             </div>
             <div class="timeline-step ${isApproved ? 'is-done' : 'is-current'}">
               <div class="timeline-step__dot"></div>
               <div>
                 <div class="timeline-step__title">${isApproved ? '中心实验师李建国审核通过' : '中心实验师审核中'}</div>
-                <div class="timeline-step__desc">${isApproved ? '核准实验品系、IACUC伦理与实验级别' : '中心待办审核中'}</div>
+                <div class="timeline-step__desc">${isApproved ? (o.kind === 'breeding' ? '核准屏障房容量及IACUC伦理合规，同意排位' : '核准实验品系、IACUC伦理与实验级别') : (o.kind === 'breeding' ? '屏障房排位空间与伦理审查中' : '中心待办审核中')}</div>
               </div>
             </div>
             <div class="timeline-step ${isFulfilled ? 'is-done' : ''}">
               <div class="timeline-step__dot"></div>
               <div>
                 <div class="timeline-step__title">
-                  ${o.kind === 'internal' ? (isFulfilled ? '仓库已完成整单配发' : '等待仓库整单出库') : o.kind === 'external' ? (isFulfilled ? '已向入围供应商汇总采购' : '等待采购汇总') : (isFulfilled ? '现场核验完成已分配笼位' : '等待线下交接入场')}
+                  ${
+                    o.kind === 'internal'
+                      ? (isFulfilled ? '仓库已完成整单配发' : '等待仓库整单出库')
+                      : o.kind === 'external'
+                        ? (isFulfilled ? '已向入围供应商汇总采购' : '等待采购汇总')
+                        : (isFulfilled ? '屏障现场核验入笼办理完成' : '等待动物到校现场核验入住')
+                  }
                 </div>
-                <div class="timeline-step__desc">${isFulfilled ? '请持电子单号至云漫湖动物中心交接' : '系统流转中'}</div>
+                <div class="timeline-step__desc">${isFulfilled ? (o.kind === 'breeding' ? `现场正式划扣基础费用，分配物理笼位 ${occupiedCages.join('、') || ''}（计为真实 Day 1）` : '请持电子单号至云漫湖动物中心交接') : (o.kind === 'breeding' ? '动物到校后请前往屏障交接区办理现场核验入笼' : '系统流转中')}</div>
               </div>
             </div>
+            ${
+              o.kind === 'breeding' && (o.fulfillStatus === 'breeding' || o.fulfillStatus === 'exited')
+                ? `
+              <div class="timeline-step ${o.fulfillStatus === 'exited' ? 'is-done' : 'is-current'}">
+                <div class="timeline-step__dot"></div>
+                <div>
+                  <div class="timeline-step__title">在养巡房管护及动态调笼</div>
+                  <div class="timeline-step__desc">${feeding?.changeLogs?.length ? `管理员已记录 ${feeding.changeLogs.length} 次调笼变更流水` : '日常屏障巡房管护中，合笼释放笼位线下补发耗材'}</div>
+                </div>
+              </div>
+            `
+                : ''
+            }
           </div>
         `
             : ''

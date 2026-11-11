@@ -34,7 +34,7 @@ import type {
   User,
 } from '../types'
 
-export const SEED_VERSION = 17
+export const SEED_VERSION = 18
 
 /** 演示基准日：种子数据围绕该日期编排，保证演示脚本可重复执行 */
 export const DEMO_TODAY = '2026-10-25'
@@ -912,6 +912,12 @@ interface SeedOrder {
   rejectReason?: string
   expectDate?: string
   remark?: string
+  animalCount?: number
+  feedDays?: number
+  recommendedCages?: number
+  iacucNo?: string
+  preFreezeAmountFen?: number
+  feeStatus?: 'frozen' | 'charged' | 'unpaid'
   createdAt: string
   history: OrderEvent[]
 }
@@ -1445,8 +1451,14 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       serviceName: breed.name,
       itemName: breed.name,
       spec: breed.spec,
-      unit: breed.unit,
-      quantity: 20,
+      unit: '笼',
+      quantity: 2,
+      animalCount: 20,
+      feedDays: 30,
+      recommendedCages: 4,
+      iacucNo: 'GZMU-IACUC-2026-088',
+      preFreezeAmountFen: 60000,
+      feeStatus: 'charged',
       unitPriceFen: breed.unitPriceFen,
       auditMode: 'system',
       auditStatus: 'approved',
@@ -1456,7 +1468,12 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       applicantOrg: '公共卫生学院课题组',
       projectId: pj[1].id,
       createdAt: '2026-10-19',
-      history: [ev('2026-10-19', '李老师', '提交饲养申请'), ev('2026-10-20', '李动物', '中心确认通过'), ev('2026-10-20', '李动物', '实际入场')],
+      history: [
+        ev('2026-10-19', '李老师', '提交饲养申请'),
+        ev('2026-10-20', '李动物', '中心排位审核通过'),
+        ev('2026-10-20', '李动物', '现场核验入住，正式划扣预付基础饲养费 ¥600.00'),
+        ev('2026-11-02', '李动物', '巡房合笼调整：当前在养 2 笼，线下补发饲料平衡'),
+      ],
     }),
     toOrder({
       ...base,
@@ -1531,6 +1548,16 @@ function seedFeedings(labId: string, prefix: string, ords: Order[]): { feedings:
       status: 'breeding',
       entryAt: '2026-10-20',
       cageIds: [`cg_${prefix}_a1`, `cg_${prefix}_a2`],
+      changeLogs: [
+        {
+          at: '2026-11-02',
+          action: '合笼归并（释放 1 笼）',
+          note: '巡房发现弱仔合并，释放 A-103 笼位；期初预付款不退，中心线下已补发全价膨化饲料 2 袋',
+          operator: '李建国（实验师）',
+          beforeCages: 3,
+          afterCages: 2,
+        },
+      ],
     },
     {
       id: `fd_${prefix}_2`,

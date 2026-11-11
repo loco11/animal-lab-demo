@@ -112,14 +112,18 @@ export function entryFeeding(orderId: string, cageIds: string[], entryAt: string
       ...d.occupancies,
     ],
     cages: d.cages.map((c) => (cageIds.includes(c.id) ? { ...c, status: 'occupied' as const } : c)),
-    orders: d.orders.map((o) => (o.id === order.id ? { ...o, fulfillStatus: 'breeding' as const, updatedAt: now } : o)),
+    orders: d.orders.map((o) =>
+      o.id === order.id
+        ? { ...o, fulfillStatus: 'breeding' as const, feeStatus: 'charged' as const, updatedAt: now }
+        : o,
+    ),
   }))
 
   addOrderEvent(order.id, {
     at: entryAt,
     actor: user.name,
-    action: '实际入场并占用笼位',
-    note: `笼位 ${cages.map((c) => c.code).join('、')}`,
+    action: '现场核验入住，正式划扣预付基础饲养费',
+    note: `分配物理笼位：${cages.map((c) => c.code).join('、')}，基础费用已正式结转中心账户`,
   })
   log(`饲养订单 ${order.code} 入场，占用 ${cageIds.length} 个笼位`, 'feeding', feedingId)
   return done(`入场成功，占用 ${cageIds.length} 个笼位`, feedingId)
@@ -194,16 +198,39 @@ export function changeCages(input: CageChangeInput): OpResult {
         ? {
             ...f,
             cageIds: [...f.cageIds.filter((id) => !input.removeCageIds.includes(id)), ...input.addCageIds],
+            changeLogs: [
+              ...(f.changeLogs || []),
+              {
+                at: input.date,
+                action:
+                  input.addCageIds.length && input.removeCageIds.length
+                    ? `换笼调整（+${input.addCageIds.length}/-${input.removeCageIds.length}）`
+                    : input.addCageIds.length
+                      ? `分笼扩充（+${input.addCageIds.length} 笼）`
+                      : `合笼归并（释放 ${input.removeCageIds.length} 笼）`,
+                note: input.reason.trim(),
+                operator: user.name,
+                beforeCages: f.cageIds.length,
+                afterCages: remaining,
+              },
+            ],
           }
         : f,
     ),
   }))
 
+  const changeActionDesc =
+    input.addCageIds.length && input.removeCageIds.length
+      ? `换笼调整（+${input.addCageIds.length}/-${input.removeCageIds.length}）`
+      : input.addCageIds.length
+        ? `分笼扩充（+${input.addCageIds.length} 笼）`
+        : `合笼归并（释放 ${input.removeCageIds.length} 笼）`
+
   addOrderEvent(feeding.orderId, {
     at: input.date,
     actor: user.name,
-    action: `笼位变更：增加 ${input.addCageIds.length} 个、释放 ${input.removeCageIds.length} 个`,
-    note: input.reason.trim(),
+    action: `管理员巡房笼位调整：${changeActionDesc}，当前在养 ${remaining} 笼`,
+    note: `${input.reason.trim()}（费用说明：申请期初费用不退，提前合笼释放笼位由中心线下补发饲料耗材平衡）`,
   })
   log(`饲养 ${feeding.id} 于 ${input.date} 变更笼位`, 'feeding', feeding.id)
   return done(`笼位变更已生效，当前占用 ${remaining} 个笼位`)
