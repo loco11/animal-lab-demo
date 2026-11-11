@@ -1,0 +1,325 @@
+/* 基础排版与应用外壳
+   注：部门规范未定义应用外壳与长文排版，此处按同体系补充。 */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  overflow-x: hidden;
+  background: var(--c-bg-page);
+  color: var(--c-text);
+  font: 400 var(--fs-body) / 22px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu,
+    'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
+    'Microsoft YaHei', 'Source Han Sans CN', sans-serif;
+}
+
+a {
+  color: var(--c-primary);
+  text-decoration: none;
+}
+
+/* ---------- 外壳 ---------- */
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+
+.app-header {
+  height: var(--header-h);
+  background: var(--c-bg-panel);
+  border-bottom: 1px solid var(--c-border-divider);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--pad-container);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.app-header__brand {
+  font-size: var(--fs-section-title);
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--c-title);
+}
+
+.app-header__right {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+}
+
+.app-header__user {
+  font-size: var(--fs-body);
+  color: var(--c-text);
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  min-height: 0;
+}
+
+.app-nav {
+  width: var(--nav-w);
+  flex: 0 0 var(--nav-w);
+  background: #ffffff;
+  border-right: 1px solid var(--c-border-divider);
+  padding: 12px 0 28px;
+  position: sticky;
+  top: var(--header-h);
+  height: calc(100vh - var(--header-h));
+  overflow-y: auto;
+}
+
+.app-nav__group-wrap {
+  margin-bottom: 14px;
+}
+
+.app-nav__group-wrap:not(:first-child) {
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
+}
+
+/* 一级分组头：父级大分类，字号稳重大方，纲目清晰（大于子级） */
+.app-nav__group-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px 5px 14px;
+  user-select: none;
+}
+
+.app-nav__group-bar {
+  display: inline-block;
+  width: 3px;
+  height: 12px;
+  background: #16529b;
+  border-radius: 2px;
+  margin-right: 8px;
+}
+
+.app-nav__group-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  color: #0f172a;
+  letter-spacing: 0.2px;
+}
+
+/* 二级菜单列表容器：带清晰的左侧阶梯缩进与纵向引导线 */
+.app-nav__group-body {
+  padding: 2px 10px 4px 14px;
+  margin-left: 8px;
+  border-left: 1px dashed #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* 二级功能菜单：子项字号 12.5px，常规字重，从属于父级 */
+.app-nav__item {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 18px;
+  color: #475569;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+  text-decoration: none;
+}
+
+.app-nav__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 10px;
+  color: #64748b;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+
+.app-nav__text {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-nav__active-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #16529b;
+}
+
+.app-nav__item:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+.app-nav__item:hover .app-nav__icon {
+  color: #16529b;
+}
+
+.app-nav__item.is-active {
+  color: #16529b;
+  font-weight: 600;
+  background: #eef4fc;
+}
+
+.app-nav__item.is-active .app-nav__icon {
+  color: #16529b;
+}
+
+.app-nav__item.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  background: #16529b;
+  border-radius: 0 2px 2px 0;
+}
+
+.app-content {
+  flex: 1;
+  min-width: 0;
+  padding: var(--pad-container);
+  overflow-x: hidden;
+}
+
+/* ---------- 页面与容器 ---------- */
+.page {
+  padding: 0;
+}
+
+.page-title {
+  margin: 0 0 4px;
+  font-size: var(--fs-page-title);
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--c-title);
+}
+
+.page-desc {
+  margin: 0 0 var(--gap);
+  font-size: var(--fs-body);
+  line-height: 22px;
+  color: var(--c-desc);
+}
+
+.panel {
+  background: var(--c-bg-panel);
+  padding: var(--pad-container);
+  margin-bottom: var(--gap);
+}
+
+.panel-title {
+  margin: 0 0 var(--gap);
+  font-size: var(--fs-section-title);
+  line-height: 24px;
+  font-weight: 600;
+  color: var(--c-title);
+}
+
+.panel-table {
+  padding: var(--pad-container);
+}
+
+.panel-head {
+  padding: var(--pad-container) var(--pad-container) var(--gap);
+}
+
+.para {
+  margin: 0 0 var(--gap);
+  max-width: 900px;
+  font-size: var(--fs-body);
+  line-height: 22px;
+  color: var(--c-text);
+}
+
+.para:last-child {
+  margin-bottom: 0;
+}
+
+.hint {
+  font-size: var(--fs-label);
+  line-height: 20px;
+  color: var(--c-desc);
+}
+
+/* ---------- 登录 ---------- */
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pad-container);
+}
+
+.login-box {
+  width: 360px;
+  background: var(--c-bg-panel);
+  padding: 32px var(--pad-container);
+}
+
+/* ---------- 指标卡 ---------- */
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+
+@media (max-width: 1167px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 575px) {
+  .metric-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.metric {
+  background: var(--c-bg-panel);
+  padding: var(--pad-container);
+}
+
+.metric__label {
+  font-size: var(--fs-label);
+  line-height: 20px;
+  color: var(--c-desc);
+}
+
+.metric__value {
+  margin-top: var(--gap-tight);
+  font-size: 30px;
+  line-height: 38px;
+  font-weight: 600;
+  color: var(--c-title);
+}
+
+.metric__unit {
+  margin-left: 4px;
+  font-size: var(--fs-body);
+  font-weight: 400;
+  color: var(--c-text);
+}
