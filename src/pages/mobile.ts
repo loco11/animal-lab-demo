@@ -397,15 +397,6 @@ export function mobilePage(host: HTMLElement): void {
         </div>
 
         <div class="apply-body">
-          <!-- 实时库存与资源状态卡 -->
-          <div class="apply-stock-box" id="apply-stock-display">
-            <div class="apply-stock-box__left">
-              <span class="apply-stock-dot"></span>
-              <span class="apply-stock-text" id="apply-stock-title">当前中心实时在库可用</span>
-            </div>
-            <div class="apply-stock-num" id="apply-stock-val">--</div>
-          </div>
-
           <!-- 表单主体卡片 -->
           <div class="apply-form-card">
             <!-- 字段 1：品规选择 -->
@@ -419,13 +410,16 @@ export function mobilePage(host: HTMLElement): void {
               </div>
             </div>
 
-            <!-- 字段 2：数量 / 天数 -->
+            <!-- 字段 2：数量 / 天数（用户要求：实时库存展示在申购数量右侧） -->
             ${
               isBreeding
                 ? `
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
                 <div class="apply-field">
-                  <label class="apply-label">预约笼位数（笼）</label>
+                  <label class="apply-label">
+                    <span>预约笼位数（笼）</span>
+                    <span class="apply-stock-inline" id="apply-stock-inline"></span>
+                  </label>
                   <input type="number" class="apply-input" id="apply-quantity" value="2" min="1" max="20" />
                 </div>
                 <div class="apply-field">
@@ -436,7 +430,10 @@ export function mobilePage(host: HTMLElement): void {
             `
                 : `
               <div class="apply-field">
-                <label class="apply-label">申购数量（只）</label>
+                <label class="apply-label">
+                  <span>申购数量（只）</span>
+                  <span class="apply-stock-inline" id="apply-stock-inline"></span>
+                </label>
                 <input type="number" class="apply-input" id="apply-quantity" value="20" min="1" max="100" />
               </div>
             `
@@ -512,8 +509,7 @@ export function mobilePage(host: HTMLElement): void {
 
     const qtyInput = slot.querySelector('#apply-quantity') as HTMLInputElement
     const daysInput = slot.querySelector('#apply-days') as HTMLInputElement | null
-    const stockTitle = slot.querySelector('#apply-stock-title') as HTMLElement
-    const stockVal = slot.querySelector('#apply-stock-val') as HTMLElement
+    const stockInline = slot.querySelector('#apply-stock-inline') as HTMLElement | null
     const totalPriceEl = slot.querySelector('#apply-total-price') as HTMLElement
 
     const serviceTriggerText = slot.querySelector('#trigger-service-text') as HTMLElement
@@ -549,21 +545,21 @@ export function mobilePage(host: HTMLElement): void {
       const qty = parseInt(qtyInput?.value || '1', 10) || 1
       const days = daysInput ? parseInt(daysInput.value || '1', 10) || 1 : 1
 
-      // 1. 实时库存展示
-      if (isInternal && stockId) {
-        const item = stockItems.find((it) => it.id === stockId)
-        const count = item ? item.quantity : 0
-        stockTitle.textContent = `中心仓库实时在库可用`
-        stockVal.innerHTML = `<span style="color:#059669;font-weight:800;">${count}</span> 只现货`
-        if (count < qty) {
-          stockVal.innerHTML += ` <span style="font-size:11px;color:#dc2626;">(库存预警)</span>`
+      // 1. 实时库存展示（位于申购数量右侧）
+      if (stockInline) {
+        if (isInternal && stockId) {
+          const item = stockItems.find((it) => it.id === stockId)
+          const count = item ? item.quantity : 0
+          if (count < qty) {
+            stockInline.innerHTML = `实时库存：<span style="color:#dc2626;font-weight:700;">${count}</span> 只 <span style="font-size:11px;color:#dc2626;">(不足)</span>`
+          } else {
+            stockInline.innerHTML = `实时库存：<span style="color:#059669;font-weight:700;">${count}</span> 只`
+          }
+        } else if (isBreeding) {
+          stockInline.innerHTML = `实时库存：<span style="color:#7e22ce;font-weight:700;">${idleCages}</span> 笼`
+        } else {
+          stockInline.innerHTML = `实时库存：<span style="color:#2563eb;font-weight:700;">协议充足</span>`
         }
-      } else if (isBreeding) {
-        stockTitle.textContent = `SPF 屏障独立通风笼位实时空闲`
-        stockVal.innerHTML = `<span style="color:#7e22ce;font-weight:800;">${idleCages}</span> 笼可用`
-      } else {
-        stockTitle.textContent = `入围厂商直供状态`
-        stockVal.innerHTML = `<span style="color:#2563eb;font-weight:800;">现货协议直发</span>`
       }
 
       // 2. 实时总价计算（自动根据学生提交的数量生成金额）
