@@ -103,7 +103,6 @@ export function mobilePage(host: HTMLElement): void {
           <div class="student-info">
             <div class="student-name-row">
               <span class="student-name">张立</span>
-              <span class="student-role-tag">研究生</span>
             </div>
             <div class="student-meta-row">
               <span>学号 202409012</span>
@@ -143,7 +142,6 @@ export function mobilePage(host: HTMLElement): void {
             <div class="section-title">
               <span>在架服务申办</span>
             </div>
-            <span class="section-subtitle">点击卡片在线选品填报</span>
           </div>
 
           <!-- 卡片 1：自产动物 -->
