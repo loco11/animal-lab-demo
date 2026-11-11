@@ -229,14 +229,26 @@ export function markOrdersSent(orderIds: string[]): OpResult {
   updateData((d) => ({
     ...d,
     orders: d.orders.map((o) =>
-      orderIds.includes(o.id) ? { ...o, fulfillStatus: 'sent' as const, updatedAt: todayStr() } : o,
+      orderIds.includes(o.id)
+        ? {
+            ...o,
+            fulfillStatus: 'sent' as const,
+            feeStatus: 'charged' as const,
+            updatedAt: todayStr(),
+          }
+        : o,
     ),
   }))
   orders.forEach((o) => {
-    addOrderEvent(o.id, { at: todayStr(), actor: getCurrentUser().name, action: '标记已发送供应商' })
+    addOrderEvent(o.id, {
+      at: todayStr(),
+      actor: getCurrentUser().name,
+      action: '汇总并发送厂商（订单结束）',
+      note: '中心老师已完成外购需求汇总并正式发往供货商排产发货，预冻结项目经费已结转，厂商到校送达后直接电话联系学生交接，订单已办结',
+    })
   })
-  log(`外购订单标记已发送 ${orders.length} 笔`, 'purchase', orderIds.join(','))
-  return done(`已标记 ${orders.length} 笔订单为已处理（已发送供应商）`)
+  log(`外购订单汇总并发送厂商 ${orders.length} 笔`, 'purchase', orderIds.join(','))
+  return done(`已将 ${orders.length} 笔外购订单状态更新为【汇总并发送厂商】，订单流程结束办结`)
 }
 
 /** 可汇总的外购订单：已通过确认、尚未进入批次、且已关联供应商 */
@@ -310,15 +322,27 @@ export function markSent(batchId: string): OpResult {
       b.id === batchId ? { ...b, status: 'sent' as const, sentAt: todayStr() } : b,
     ),
     orders: d.orders.map((o) =>
-      batch.orderIds.includes(o.id) ? { ...o, fulfillStatus: 'sent' as const, updatedAt: todayStr() } : o,
+      batch.orderIds.includes(o.id)
+        ? {
+            ...o,
+            fulfillStatus: 'sent' as const,
+            feeStatus: 'charged' as const,
+            updatedAt: todayStr(),
+          }
+        : o,
     ),
   }))
 
   batch.orderIds.forEach((id) =>
-    addOrderEvent(id, { at: todayStr(), actor: getCurrentUser().name, action: '已发送供应商', note: '学校端不登记到货或领取完成，进度停在“已发送供应商”' }),
+    addOrderEvent(id, {
+      at: todayStr(),
+      actor: getCurrentUser().name,
+      action: '汇总并发送厂商（订单结束）',
+      note: '外购批次已汇总并正式发送厂商，厂商到货电话联系学生领走，订单办结',
+    }),
   )
-  log(`外购批次 ${batchId} 标记已发送供应商`, 'purchase', batchId)
-  return done(`已标记发送，共 ${batch.orderIds.length} 笔订单状态更新为“已发送供应商”`)
+  log(`外购批次 ${batchId} 汇总并发送厂商`, 'purchase', batchId)
+  return done(`已标记发送，共 ${batch.orderIds.length} 笔订单状态更新为【汇总并发送厂商】，订单流程结束`)
 }
 
 /** 批次明细：导出 CSV 与页面预览使用同一份数据 */

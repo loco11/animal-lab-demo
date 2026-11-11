@@ -148,7 +148,8 @@ function renderIncoming(host: HTMLElement): void {
             const range = r.expectStartDate
               ? `<strong>${r.expectStartDate}</strong> 至 <strong>${r.expectEndDate || '—'}</strong><br><span style="font-size:11px;color:#0284c7;">拟养 ${r.feedDays || 14} 天</span>`
               : `<span style="color:#64748b;">拟养 ${r.feedDays || 14} 天</span>`
-            return `${range}<br><span style="font-size:11px;color:#334155;">预订 <strong>${r.quantity} 笼</strong>（${r.animalCount || 20} 只）</span>`
+            const cageTypeLabel = r.cageType ? ` · <span style="color:#475569;">${escapeHtml(r.cageType)}</span>` : ''
+            return `${range}<br><span style="font-size:11px;color:#334155;">预订 <strong>${r.quantity} 笼</strong>（${r.animalCount || 20} 只${cageTypeLabel}）</span>`
           },
         },
         {
@@ -352,14 +353,14 @@ function openAllocateDialog(order: Order): void {
   function buildDialogContent(): string {
     const end = addDays(curStart, curDays)
     const expire = addDays(curStart, 2)
-    const availableCages = freeCages(curStart, end)
+    const availableCages = freeCages(curStart, end, order.cageType)
 
     return `
       <div style="margin-bottom:12px;font-size:12px;line-height:1.6;background:#f0fdf4;border:1px solid #bbf7d0;padding:10px 12px;border-radius:6px;color:#166534;">
         <strong>💡 时空排位与2天保留规则：</strong><br>
         ① <strong>时空可用性检测</strong>：系统已自动根据所选区间 [${curStart} ~ ${end}] 筛选出期间无任何冲突占用、非停用、非消杀中的空闲物理笼位。<br>
         ② <strong>2天保留倒计时</strong>：审核同意并预锁定后，系统将为该课题组保留至 <strong>${expire} 23:59</strong>；若学生超过 2 天未到校办理入住，系统将自动释放笼位回空闲池，并退回待重新排位。<br>
-        ③ <strong>同机架就近分配</strong>：申请预订 <strong>${order.quantity} 笼</strong>（拟养 ${order.animalCount || 20} 只），建议优先勾选同一房间同一机架的连续笼位。
+        ③ <strong>同机架就近分配</strong>：申请预订 <strong>${order.quantity} 笼</strong>（拟养 ${order.animalCount || 20} 只${order.cageType ? ` · 适配笼型：<strong>${order.cageType}</strong>` : ''}），建议优先勾选同一房间同一机架的连续笼位。
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">

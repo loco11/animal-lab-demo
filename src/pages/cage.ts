@@ -1,6 +1,6 @@
 /** 笼位管理：台账、空间维度、状态筛选、占用详情、看板联动与变更历史 */
 
-import { occupanciesOf, listCages, supplyUsagesOf } from '../core/biz/feeding'
+import { occupanciesOf, listCages, supplyUsagesOf, completeCageCleaning } from '../core/biz/feeding'
 import { data, log, scoped, updateData } from '../core/data'
 import { assertAction } from '../core/auth'
 import { escapeHtml, uid } from '../core/utils'
@@ -224,6 +224,16 @@ function filterRows(): Cage[] {
 }
 
 function currentUsageDetail(cageId: string): string {
+  const cage = data().cages.find((c) => c.id === cageId)
+  if (cage?.status === 'cleaning') {
+    return '<span style="color:#0284c7;font-size:12px;font-weight:500;">🧼 屏障合笼/退出，熏蒸消杀中</span>'
+  }
+  if (cage?.status === 'reserved') {
+    const resOcc = data().occupancies.find((o) => o.cageId === cageId && o.type === 'reserve')
+    const resOrder = resOcc ? data().orders.find((o) => o.id === resOcc.orderId) : undefined
+    return `<span style="font-size:12px;color:#854d0e;font-weight:600;">🔒 已预留给 ${escapeHtml(resOrder?.applicantName || '课题组')}</span> <span style="font-size:11px;color:#64748b;">(保留至 ${resOrder?.reserveExpireAt || '—'})</span>`
+  }
+
   const occ = data().occupancies.find((o) => o.cageId === cageId && o.end === null)
   if (!occ) return '<span style="color:#94a3b8;">—</span>'
   const feeding = data().feedings.find((f) => f.id === occ.feedingId)

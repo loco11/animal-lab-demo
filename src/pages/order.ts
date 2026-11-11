@@ -11,6 +11,7 @@ import {
   shipOrder,
 } from '../core/biz/orders'
 import { generateExternalFee, plainFeeOf } from '../core/biz/fee'
+import { markOrdersSent } from '../core/biz/purchase'
 import { entryFeeding, freeCages } from '../core/biz/feeding'
 import { AUDIT_MODE_TEXT, AUDIT_STATUS_TEXT, FULFILL_TEXT, KIND_TEXT, auditPassed, auditTone, fulfillTone } from '../core/labels'
 import { data, scoped } from '../core/data'
@@ -275,6 +276,9 @@ function rowActions(row: Order): RowAction[] {
     list.push({ text: '退回', act: 'reject', danger: true })
   }
   if (row.kind === 'external' && auditPassed(row.auditStatus)) {
+    if (row.fulfillStatus === 'pending_collect' || row.fulfillStatus === 'pending_send') {
+      list.push({ text: '汇总并发送厂商', act: 'send_supplier' })
+    }
     if (!plainFeeOf(row.id)) list.push({ text: '生成费用', act: 'genfee' })
   }
   if (row.kind === 'breeding' && auditPassed(row.auditStatus) && row.fulfillStatus === 'incoming') {
@@ -313,6 +317,9 @@ function handleAction(act: string, row: Order): void {
       break
     case 'genfee':
       runGuarded('fee:generate', () => showResult(generateExternalFee(fresh)))
+      break
+    case 'send_supplier':
+      runGuarded('purchase:send', () => showResult(markOrdersSent([fresh.id])))
       break
     case 'entry':
       runGuarded('feeding:entry', () => openEntry(fresh))

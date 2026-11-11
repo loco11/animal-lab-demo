@@ -34,7 +34,7 @@ import type {
   User,
 } from '../types'
 
-export const SEED_VERSION = 18
+export const SEED_VERSION = 19
 
 /** 演示基准日：种子数据围绕该日期编排，保证演示脚本可重复执行 */
 export const DEMO_TODAY = '2026-10-25'
@@ -653,12 +653,13 @@ function cagesFor(labId: string, prefix: string): Cage[] {
       room: '101室（SPF小鼠屏障室）',
       rack: '01号IVC小鼠笼架',
       env: 'SPF',
+      cageType: 'IVC小鼠笼',
       capacity: 5,
       status: 'free',
     })
   }
 
-  // 贵安主楼 - 1F - 101室（SPF小鼠屏障室）- 02号IVC小鼠笼架
+  // 贵安主楼 - 1F - 101室（SPF小鼠屏障室）- 02号IVC小鼠笼架 (A-108 设为消杀中，A-109/110 供预排位锁定)
   for (let i = 7; i <= 12; i++) {
     list.push({
       id: `cg_${prefix}_a${i}`,
@@ -669,8 +670,10 @@ function cagesFor(labId: string, prefix: string): Cage[] {
       room: '101室（SPF小鼠屏障室）',
       rack: '02号IVC小鼠笼架',
       env: 'SPF',
+      cageType: 'IVC小鼠笼',
       capacity: 5,
-      status: 'free',
+      status: i === 8 ? 'cleaning' : 'free',
+      note: i === 8 ? '巡房合笼释放，终末臭氧+过氧化氢熏蒸消杀中' : undefined,
     })
   }
 
@@ -685,6 +688,7 @@ function cagesFor(labId: string, prefix: string): Cage[] {
       room: '102室（SPF大鼠屏障室）',
       rack: '01号IVC大鼠笼架',
       env: 'SPF',
+      cageType: 'IVC大鼠笼',
       capacity: 3,
       status: 'free',
     })
@@ -701,6 +705,7 @@ function cagesFor(labId: string, prefix: string): Cage[] {
       room: '201室（SPF免疫缺陷专用室）',
       rack: '03号特种小鼠笼架',
       env: 'SPF',
+      cageType: '隔离包/特种小鼠笼',
       capacity: 5,
       status: 'free',
     })
@@ -717,6 +722,7 @@ function cagesFor(labId: string, prefix: string): Cage[] {
       room: '101室（普通教学寄养室）',
       rack: '01号教学寄养架',
       env: '普通',
+      cageType: '普通开放笼',
       capacity: 4,
       status: i === 3 ? 'disabled' : 'free',
       note: i === 3 ? '停用检修笼位，不可用于入场' : undefined,
@@ -734,6 +740,7 @@ function cagesFor(labId: string, prefix: string): Cage[] {
       room: '201室（普通行为学配套室）',
       rack: '02号行为学寄养架',
       env: '普通',
+      cageType: '普通开放笼',
       capacity: 4,
       status: 'free',
     })
@@ -911,11 +918,17 @@ interface SeedOrder {
   projectId?: string
   rejectReason?: string
   expectDate?: string
+  expectStartDate?: string
+  expectEndDate?: string
   remark?: string
   animalCount?: number
   feedDays?: number
   recommendedCages?: number
   iacucNo?: string
+  cageType?: string
+  allocatedCageIds?: string[]
+  reserveExpireAt?: string
+  reserveStatus?: 'none' | 'reserved' | 'expired_released' | 'checked_in'
   preFreezeAmountFen?: number
   feeStatus?: 'frozen' | 'charged' | 'unpaid'
   createdAt: string
@@ -1427,20 +1440,26 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       serviceName: breed.name,
       itemName: breed.name,
       spec: breed.spec,
-      unit: breed.unit,
-      quantity: 25,
+      unit: '笼',
+      quantity: 2,
+      animalCount: 10,
+      feedDays: 14,
+      cageType: 'IVC小鼠笼',
       unitPriceFen: breed.unitPriceFen,
       auditMode: 'system',
       auditStatus: 'pending',
       fulfillStatus: 'incoming',
+      reserveStatus: 'none',
+      expectStartDate: addDays(todayStr(), 1),
+      expectEndDate: addDays(todayStr(), 15),
       source: 'user',
-      applicantName: '教师·孙老师',
+      applicantName: '学生·孙同学',
       applicantOrg: '基础医学院课题组',
       projectId: pj[0].id,
-      expectDate: '2026-10-26',
-      remark: '饲养主线：确认 → 入场占用笼位 → 笼位变更 → 耗材领用 → 退出 → 区间计费',
-      createdAt: '2026-10-24',
-      history: [ev('2026-10-24', '孙老师', '提交饲养申请', '订购与饲养相互独立，不自动生成入场')],
+      expectDate: addDays(todayStr(), 1),
+      remark: '小鼠肿瘤靶向给药实验，拟申办 2 笼 IVC 小鼠位，拟饲养 14 天',
+      createdAt: addDays(todayStr(), -1),
+      history: [ev(addDays(todayStr(), -1), '孙同学', '提交饲养申办申请，拟入场日：' + addDays(todayStr(), 1))],
     }),
     toOrder({
       ...base,
@@ -1524,6 +1543,81 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       createdAt: '2026-10-22',
       history: [ev('2026-10-22', '许同学', '提交寄养申请', '服务大厅审批：通过／退回')],
     }),
+    toOrder({
+      ...base,
+      id: `or_${prefix}_b5`,
+      code: `${labId === 'animal' ? 'AD' : 'AN'}-ORD-0015`,
+      kind: 'breeding',
+      serviceId: breed.id,
+      serviceName: breed.name,
+      itemName: breed.name,
+      spec: breed.spec,
+      unit: '笼',
+      quantity: 2,
+      animalCount: 8,
+      feedDays: 20,
+      cageType: 'IVC小鼠笼',
+      allocatedCageIds: [`cg_${prefix}_a9`, `cg_${prefix}_a10`],
+      expectStartDate: todayStr(),
+      expectEndDate: addDays(todayStr(), 20),
+      reserveExpireAt: addDays(todayStr(), 2),
+      reserveStatus: 'reserved',
+      feeStatus: 'frozen',
+      preFreezeAmountFen: 40000,
+      unitPriceFen: breed.unitPriceFen,
+      auditMode: 'system',
+      auditStatus: 'approved',
+      fulfillStatus: 'incoming',
+      source: 'user',
+      applicantName: '学生·赵同学',
+      applicantOrg: '药学院新药创制课题组',
+      projectId: pj[0].id,
+      expectDate: todayStr(),
+      remark: '天然药物抗焦虑药效学筛选（已完成 IACUC 伦理审核，保留中待现场核验入住）',
+      createdAt: addDays(todayStr(), -1),
+      history: [
+        ev(addDays(todayStr(), -1), '赵同学', '提交饲养申办申请，拟入场日：' + todayStr()),
+        ev(addDays(todayStr(), 0), '李动物', '审核排位通过：锁定笼位 A-109、A-110；48小时保留期截止：' + addDays(todayStr(), 2)),
+      ],
+    }),
+    toOrder({
+      ...base,
+      id: `or_${prefix}_b6`,
+      code: `${labId === 'animal' ? 'AD' : 'AN'}-ORD-0016`,
+      kind: 'breeding',
+      serviceId: breed.id,
+      serviceName: breed.name,
+      itemName: breed.name,
+      spec: breed.spec,
+      unit: '笼',
+      quantity: 1,
+      animalCount: 5,
+      feedDays: 10,
+      cageType: 'IVC小鼠笼',
+      allocatedCageIds: [],
+      expectStartDate: addDays(todayStr(), -4),
+      expectEndDate: addDays(todayStr(), 6),
+      reserveExpireAt: addDays(todayStr(), -2),
+      reserveStatus: 'expired_released',
+      feeStatus: 'frozen',
+      preFreezeAmountFen: 10000,
+      unitPriceFen: breed.unitPriceFen,
+      auditMode: 'system',
+      auditStatus: 'pending',
+      fulfillStatus: 'incoming',
+      source: 'user',
+      applicantName: '学生·钱同学',
+      applicantOrg: '法医学系毒理教研室',
+      projectId: pj[0].id,
+      expectDate: addDays(todayStr(), -4),
+      remark: '急性神经毒理学实验（原拟 4 天前到校，逾期 2 天未到，锁定笼位已自动释放）',
+      createdAt: addDays(todayStr(), -6),
+      history: [
+        ev(addDays(todayStr(), -6), '钱同学', '提交饲养申办申请'),
+        ev(addDays(todayStr(), -5), '李动物', '审核排位锁定笼位 A-111，保留至 ' + addDays(todayStr(), -2)),
+        ev(addDays(todayStr(), -2), '系统', '逾期 2 天未到校办理入住，系统自动释放锁定笼位并打回待重新排位'),
+      ],
+    }),
   ]
 }
 
@@ -1581,6 +1675,9 @@ function seedFeedings(labId: string, prefix: string, ords: Order[]): { feedings:
     occupancy({ id: `oc_${prefix}_3`, labId, cageId: `cg_${prefix}_a3`, feedingId: `fd_${prefix}_2`, start: '2026-10-01', end: '2026-10-05', reason: '入场占用', operator: '李动物', createdAt: '2026-10-01' }),
     occupancy({ id: `oc_${prefix}_4`, labId, cageId: `cg_${prefix}_a4`, feedingId: `fd_${prefix}_2`, start: '2026-10-01', end: '2026-10-05', reason: '入场占用', operator: '李动物', createdAt: '2026-10-01' }),
     occupancy({ id: `oc_${prefix}_5`, labId, cageId: `cg_${prefix}_a5`, feedingId: `fd_${prefix}_2`, start: '2026-10-03', end: '2026-10-05', reason: '笼位增加', operator: '李动物', createdAt: '2026-10-03' }),
+    // 预分配占用锁定 (b5)
+    occupancy({ id: `oc_${prefix}_res1`, labId, cageId: `cg_${prefix}_a9`, orderId: `or_${prefix}_b5`, type: 'reserve', start: todayStr(), end: addDays(todayStr(), 20), expireAt: addDays(todayStr(), 2), reason: '排位预分配锁定（保留至 ' + addDays(todayStr(), 2) + '）', operator: '李动物', createdAt: addDays(todayStr(), -1) }),
+    occupancy({ id: `oc_${prefix}_res2`, labId, cageId: `cg_${prefix}_a10`, orderId: `or_${prefix}_b5`, type: 'reserve', start: todayStr(), end: addDays(todayStr(), 20), expireAt: addDays(todayStr(), 2), reason: '排位预分配锁定（保留至 ' + addDays(todayStr(), 2) + '）', operator: '李动物', createdAt: addDays(todayStr(), -1) }),
   ]
   return { feedings, occupancies }
 }
@@ -1734,10 +1831,15 @@ export function createSeedData(): DemoData {
     })
   })
 
-  // 占用中的笼位状态同步
-  const busy = new Set(occupancies.filter((o) => o.end === null).map((o) => o.cageId))
+  // 占用中的笼位与预分配锁定状态同步
+  const busy = new Set(occupancies.filter((o) => o.end === null && o.type !== 'reserve').map((o) => o.cageId))
+  const reservedCageIds = new Set(occupancies.filter((o) => o.type === 'reserve').map((o) => o.cageId))
   cages.forEach((c) => {
-    if (busy.has(c.id)) c.status = 'occupied'
+    if (busy.has(c.id)) {
+      c.status = 'occupied'
+    } else if (reservedCageIds.has(c.id)) {
+      c.status = 'reserved'
+    }
   })
 
   return {

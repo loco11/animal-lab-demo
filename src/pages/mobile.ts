@@ -513,6 +513,23 @@ export function mobilePage(host: HTMLElement): void {
                 : ''
             }
 
+            <!-- 字段 6：外购集采规则说明（仅外购动物） -->
+            ${
+              kind === 'external'
+                ? `
+              <div style="margin-top:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:10px 12px;font-size:11.5px;color:#1e40af;line-height:1.6;">
+                <div style="font-weight:700;display:flex;align-items:center;gap:4px;color:#1d4ed8;margin-bottom:4px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                  外购动物集采与交付说明
+                </div>
+                <div>1. <strong>提交即预冻结经费</strong>：学生提交后系统自动预冻结所选课题项目经费，订单流转为【待发给供应商】。</div>
+                <div>2. <strong>汇总报单即办结</strong>：中心老师按供货商定期集中汇总并标记已处理，订单状态变更为【汇总并发送厂商】，系统订单流程即告结束。</div>
+                <div>3. <strong>厂商电话联系交接</strong>：供货商到校送达后，直接通过预留电话联系学生办理线下实物交接。</div>
+              </div>
+            `
+                : ''
+            }
+
             <!-- 字段 6：中心饲养管理与扣款须知（仅饲养） -->
             ${
               isBreeding
@@ -535,11 +552,11 @@ export function mobilePage(host: HTMLElement): void {
         <!-- 底部吸底提交栏 -->
         <div class="apply-sticky-bar">
           <div class="apply-total-info">
-            <span class="apply-total-label">${isBreeding ? '预估冻结总额' : '预估划转总额'}</span>
+            <span class="apply-total-label">${isBreeding || kind === 'external' ? '预估冻结总额' : '预估划转总额'}</span>
             <span class="apply-total-price" id="apply-total-price">¥ 0.00</span>
           </div>
           <button class="apply-submit-btn" id="apply-btn-submit">
-            <span>${isBreeding ? '提交排位预订申请' : '确认提交申办'}</span>
+            <span>${isBreeding ? '提交排位预订申请' : kind === 'external' ? '确认提交并冻结经费' : '确认提交申办'}</span>
             <span style="margin-left:4px;">→</span>
           </button>
         </div>
@@ -732,7 +749,7 @@ export function mobilePage(host: HTMLElement): void {
         quantity: qty,
         unitPriceFen: price,
         auditMode: 'system',
-        auditStatus: kind === 'internal' ? 'approved' : 'pending',
+        auditStatus: isBreeding ? 'pending' : 'approved',
         fulfillStatus: kind === 'internal' ? 'pending_out' : KIND_INITIAL_FULFILL[kind],
         source: 'user',
         stockItemId,
@@ -749,7 +766,7 @@ export function mobilePage(host: HTMLElement): void {
         reserveStatus: isBreeding ? 'none' : undefined,
         iacucNo,
         preFreezeAmountFen: totalFen,
-        feeStatus: isBreeding ? 'frozen' : undefined,
+        feeStatus: isBreeding || kind === 'external' ? 'frozen' : undefined,
         createdAt: todayStr(),
         updatedAt: todayStr(),
         history: [
@@ -760,12 +777,12 @@ export function mobilePage(host: HTMLElement): void {
               ? '通过移动端提交笼位排位预订'
               : kind === 'internal'
                 ? '提交自产小鼠申购并锁定现货'
-                : '通过移动端提交申办',
+                : '提交外购集采申办（预冻结项目经费）',
             note: isBreeding
               ? `拟入场：${expectStartDate}，拟养 ${feedDays} 天；拟养 ${animalCount} 只动物（推荐 ${recCages} 笼，实际预订 ${qty} 笼），已预冻结项目经费 ¥${(totalFen / 100).toFixed(2)}`
               : kind === 'internal'
                 ? `已成功锁定现货 ${qty} 只（实时冻结库存配额），请持学生姓名【张立】至中心交接窗口核销出库领走`
-                : remark,
+                : `申请集采 ${qty} ${unit}，已预冻结课题项目经费 ¥${(totalFen / 100).toFixed(2)}，待中心老师汇总后统一发送供货商`,
           },
         ],
       }
@@ -781,7 +798,7 @@ export function mobilePage(host: HTMLElement): void {
           ? `排位预订已提交！拟入场：${expectStartDate}，已预冻结经费 ¥${(totalFen / 100).toFixed(2)}，待中心实验师审核排位`
           : kind === 'internal'
             ? `申购成功！已为您锁定 ${qty} 只现货，请持姓名【张立】前往中心窗口核销出库`
-            : '申办已成功提交！已流转至实验动物中心待办',
+            : `外购集采已提交！已预冻结经费 ¥${(totalFen / 100).toFixed(2)}，状态已进入【待发给供应商】`,
         'success',
       )
       window.scrollTo(0, 0)
@@ -796,9 +813,20 @@ export function mobilePage(host: HTMLElement): void {
 
     const filteredOrders = allOrders.filter((o) => {
       if (orderFilter === 'pending') return o.auditStatus === 'pending'
-      if (orderFilter === 'processing') return o.fulfillStatus === 'pending_out' || o.fulfillStatus === 'sent'
+      if (orderFilter === 'processing') {
+        return (
+          o.fulfillStatus === 'pending_out' ||
+          (o.kind === 'external' && (o.fulfillStatus === 'pending_collect' || o.fulfillStatus === 'pending_send'))
+        )
+      }
       if (orderFilter === 'breeding') return o.fulfillStatus === 'breeding'
-      if (orderFilter === 'completed') return o.fulfillStatus === 'completed' || o.fulfillStatus === 'exited'
+      if (orderFilter === 'completed') {
+        return (
+          o.fulfillStatus === 'completed' ||
+          o.fulfillStatus === 'exited' ||
+          (o.kind === 'external' && o.fulfillStatus === 'sent')
+        )
+      }
       return true
     })
 
@@ -901,30 +929,18 @@ export function mobilePage(host: HTMLElement): void {
           statusHint = '订单已办结归档'
         }
       } else {
-        if (o.auditStatus === 'pending') {
-          statusBadgeClass = 'order-status-pill--pending'
-          statusText = '审核中'
-          statusHint = '实验师李建国待审核'
-        } else if (o.fulfillStatus === 'pending_out') {
+        if (o.auditStatus === 'pending' || o.fulfillStatus === 'pending_collect' || o.fulfillStatus === 'pending_send') {
           statusBadgeClass = 'order-status-pill--processing'
-          statusText = '待出库'
-          statusHint = '中心仓库整单配发中'
+          statusText = '待发给供应商'
+          statusHint = '已预冻结课题项目经费 · 待中心老师汇总统一发给供货商'
         } else if (o.fulfillStatus === 'sent') {
-          statusBadgeClass = 'order-status-pill--processing'
-          statusText = '采购中'
-          statusHint = '已向入围厂商汇总集采'
-        } else if (o.fulfillStatus === 'breeding') {
           statusBadgeClass = 'order-status-pill--done'
-          statusText = '在养中'
-          statusHint = 'SPF独立通风笼位动态计费'
-        } else if (o.fulfillStatus === 'completed') {
+          statusText = '汇总并发送厂商'
+          statusHint = '中心已汇总报单发往厂商 · 厂商送达后电话联系交接 · 订单已结束'
+        } else {
           statusBadgeClass = 'order-status-pill--done'
-          statusText = '可领取'
-          statusHint = '请持办件单号至中心交接'
-        } else if (o.fulfillStatus === 'exited') {
-          statusBadgeClass = 'order-status-pill--done'
-          statusText = '已结项'
-          statusHint = '已完成退出，费用划转结清'
+          statusText = '已办结'
+          statusHint = '订单已办结归档'
         }
       }
 
@@ -1000,7 +1016,14 @@ export function mobilePage(host: HTMLElement): void {
           `
               : `
             <div class="order-item-card__meta">品规数量：${o.spec} × <strong>${o.quantity} ${o.unit}</strong></div>
-            <div class="order-item-card__meta">课题经费：${o.projectId ? '已关联科研项目直接划转' : '基础医学院中药药理课题组'}</div>
+            <div class="order-item-card__meta">
+              课题经费：${o.projectId ? '已关联科研项目直接划转' : '基础医学院中药药理课题组'}
+              ${
+                o.kind === 'external'
+                  ? `<span style="font-size:11px;color:${o.feeStatus === 'charged' ? '#059669' : '#d97706'};font-weight:600;margin-left:4px;">(${o.feeStatus === 'charged' ? '预冻结已划扣结转' : '经费已预冻结'})</span>`
+                  : ''
+              }
+            </div>
             ${
               o.kind === 'internal' && o.fulfillStatus === 'pending_out'
                 ? `
@@ -1017,6 +1040,25 @@ export function mobilePage(host: HTMLElement): void {
               <div style="margin-top:8px;padding:8px 10px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;font-size:11.5px;color:#475569;line-height:1.5;">
                 <div style="font-weight:700;color:#059669;">✅ 已完成线下核销出库交付</div>
                 <div style="margin-top:2px;">申请人报姓名现场核验无误，实物库存已扣减，课题经费已正式结转划扣。</div>
+              </div>
+            `
+                : o.kind === 'external' && (o.fulfillStatus === 'pending_collect' || o.fulfillStatus === 'pending_send' || o.auditStatus === 'pending')
+                  ? `
+              <div style="margin-top:8px;padding:8px 10px;background:#fefce8;border-radius:8px;border:1px solid #fef08a;font-size:11.5px;color:#854d0e;line-height:1.5;">
+                <div style="font-weight:700;display:flex;align-items:center;gap:4px;">
+                  <span>⏰ 待发给供应商（经费已冻结）</span>
+                </div>
+                <div style="margin-top:2px;">课题项目经费已预先冻结（<strong>¥${((o.preFreezeAmountFen ?? o.quantity * o.unitPriceFen) / 100).toFixed(2)}</strong>）。中心老师将集中汇总后统一发送供货商。</div>
+              </div>
+            `
+                : o.kind === 'external' && o.fulfillStatus === 'sent'
+                  ? `
+              <div style="margin-top:8px;padding:8px 10px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;font-size:11.5px;color:#166534;line-height:1.5;">
+                <div style="font-weight:700;display:flex;align-items:center;gap:4px;color:#15803d;">
+                  <span>✅ 汇总并发送厂商（订单已结束）</span>
+                </div>
+                <div style="margin-top:2px;">中心老师已完成外购需求汇总并正式发往厂商排产发货，预冻结项目经费已结转，订单业务流转已结束。</div>
+                <div style="margin-top:2px;font-weight:600;color:#166534;">供货商到校送达后，将直接电话联系学生线下交接取货。</div>
               </div>
             `
                   : ''
@@ -1043,14 +1085,14 @@ export function mobilePage(host: HTMLElement): void {
                     ? '学生提交排位预订'
                     : o.kind === 'internal'
                       ? '学生在线申购（现货锁库）'
-                      : '申请人在线填报'
+                      : '学生在线填报（经费预冻结）'
                 }</div>
                 <div class="timeline-step__desc">${o.createdAt} · 手机端在线提交 · ${
                   o.kind === 'breeding'
                     ? `拟养 ${o.animalCount || 20} 只/预订 ${o.quantity} 笼/${o.feedDays || 14} 天 · 预冻结项目经费`
                     : o.kind === 'internal'
                       ? `已成功锁定现货 ${o.quantity} 只 · 实时冻结库存配额`
-                      : '关联科研项目经费'
+                      : `申请集采 ${o.quantity} ${o.unit} · 预冻结项目经费 ¥${((o.preFreezeAmountFen ?? o.quantity * o.unitPriceFen) / 100).toFixed(2)}`
                 }</div>
               </div>
             </div>
@@ -1062,22 +1104,26 @@ export function mobilePage(host: HTMLElement): void {
                     ? (o.fulfillStatus === 'completed'
                       ? '中心窗口核销（报姓名出库）'
                       : '待持学生姓名至中心现场交接')
-                    : isApproved
-                      ? (o.kind === 'breeding' ? '中心实验师审核排位通过（预分配锁定）' : '中心实验师李建国审核通过')
-                      : (o.reserveStatus === 'expired_released' ? '超期2天未到校·预留笼位已释放' : '中心实验师排位审核中')
+                    : o.kind === 'external'
+                      ? (isApproved ? '中心老师需求审核汇总' : '中心实验师审核中')
+                      : isApproved
+                        ? '中心实验师审核排位通过（预分配锁定）'
+                        : (o.reserveStatus === 'expired_released' ? '超期2天未到校·预留笼位已释放' : '中心实验师排位审核中')
                 }</div>
                 <div class="timeline-step__desc">${
                   o.kind === 'internal'
                     ? (o.fulfillStatus === 'completed'
                       ? `申请人【${escapeHtml(o.applicantName || '张立')}】现场核对提货完成`
                       : `请凭申请人姓名【${escapeHtml(o.applicantName || '张立')}】或单号至中心窗口出库`)
-                    : isApproved
-                      ? (o.kind === 'breeding'
+                    : o.kind === 'external'
+                      ? (isApproved
+                        ? '核准实验品系与经费预算，已纳入供货商外购汇总清单'
+                        : '中心老师正在核验课题组经费与动物品系')
+                      : isApproved
                         ? `已预分配锁定物理笼位：${o.allocatedCageIds?.length ? o.allocatedCageIds.join('、') : '已指定'} · 拟入场：${o.expectStartDate || '—'} · 最晚保留至 ${o.reserveExpireAt || '—'}`
-                        : '核准实验品系、IACUC伦理与实验级别')
-                      : (o.reserveStatus === 'expired_released'
-                        ? '⚠️ 该预约已超过最晚保留期限，系统已自动释放锁定的物理笼位，等待实验师与您联系重新排位'
-                        : (o.kind === 'breeding' ? '屏障房排位空间与伦理审查中' : '中心待办审核中'))
+                        : (o.reserveStatus === 'expired_released'
+                          ? '⚠️ 该预约已超过最晚保留期限，系统已自动释放锁定的物理笼位，等待实验师与您联系重新排位'
+                          : '屏障房排位空间与伦理审查中')
                 }</div>
               </div>
             </div>
@@ -1102,7 +1148,7 @@ export function mobilePage(host: HTMLElement): void {
                     o.kind === 'internal'
                       ? (isFulfilled ? '管理员出库交付完成（经费已结转）' : '等待现场提货完成交付')
                       : o.kind === 'external'
-                        ? (isFulfilled ? '已向入围供应商汇总采购' : '等待采购汇总')
+                        ? (o.fulfillStatus === 'sent' ? '【汇总并发送厂商】（订单已结束）' : '等待汇总发送厂商')
                         : (isFulfilled ? '屏障现场核验入笼办理完成' : '等待动物到校现场核验入住')
                   }
                 </div>
@@ -1112,12 +1158,12 @@ export function mobilePage(host: HTMLElement): void {
                       ? `现场正式划扣基础费用，分配物理笼位 ${occupiedCages.join('、') || ''}（计为真实 Day 1）`
                       : o.kind === 'internal'
                         ? '实物库存物理扣减完成，课题经费已正式结转划扣'
-                        : '请持电子单号至云漫湖动物中心交接')
+                        : '中心老师已向协议供货商统一报单，经费已正式结转，厂商到校后电话联系学生交付取货，订单已结束')
                     : (o.kind === 'breeding'
                       ? '动物到校后请前往屏障交接区办理现场核验入笼'
                       : o.kind === 'internal'
                         ? '中心管理员核验姓名后一键办理出库并划转经费'
-                        : '系统流转中')
+                        : '等待中心老师定期集中汇总并标记发送入围厂商')
                 }</div>
               </div>
             </div>

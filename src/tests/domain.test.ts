@@ -14,7 +14,17 @@ import { data } from '../core/data'
 import { approveOrder, listOrders, shipOrder } from '../core/biz/orders'
 import { adjustStock, batchStockCheck, createStockItem, importStockItems, stockIn, stockLoss } from '../core/biz/stock'
 import { createBatch, createSupplier, createSupplierItem, markOrdersSent, markSent, registerAnomaly, toggleSupplier, toggleSupplierItem, updateAnomalyStatus, updateSupplier, updateSupplierItem } from '../core/biz/purchase'
-import { entryFeeding, exitFeeding, generateFeedingFee, quoteFeedingFee, takeSupply } from '../core/biz/feeding'
+import {
+  allocateCages,
+  checkAndReleaseExpiredReservations,
+  completeCageCleaning,
+  entryFeeding,
+  exitFeeding,
+  freeCages,
+  generateFeedingFee,
+  quoteFeedingFee,
+  takeSupply,
+} from '../core/biz/feeding'
 import { queryResult, retryCharge, setChargeOutcome, submitCharge } from '../core/biz/fee'
 
 const ANIMAL = 'animal'
@@ -564,5 +574,82 @@ describe('T04 / T05 角色与权限', () => {
 
   it('超级管理员保护角色不允许停用', () => {
     expect(toggleRole('r_super', false).ok).toBe(false)
+  })
+})
+
+describe('笼位时空排位预分配、2天保留释放与现场入住转正', () => {
+  it('时空冲突检测：已预定/已占用的时间段被阻止，无重叠区间允许', () => {
+    // cg_ani_a3 初始为空闲
+    expect(freeCages('2026-11-20', '2026-11-30').some((c) => c.id === 'cg_ani_a3')).toBe(true)
+
+    // 老师为 or_ani_b1 审核排位，锁定 11-20 ~ 11-30 的 cg_ani_a3 笼位
+    const alloc = allocateCages('or_ani_b1', ['cg_ani_a3'], '2026-11-20', 10)
+    expect(alloc.ok).toBe(true)
+    expect(data().cages.find((c) => c.id === 'cg_ani_a3')!.status).toBe('reserved')
+
+    // 在冲突时间段内（11-25）再次检测，cg_ani_a3 不再可用
+    expect(freeCages('2026-11-25', '2026-11-28').some((c) => c.id === 'cg_ani_a3')).toBe(false)
+
+    // 重复给另一订单分配冲突时间段的同一笼位会被拒绝
+    expect(allocateCages('or_ani_b3', ['cg_ani_a3'], '2026-11-25', 5).ok).toBe(false)
+  })
+
+  it('2天保留机制：自动推导拟入场日+2天保留期限', () => {
+    const alloc = allocateCages('or_ani_b1', ['cg_ani_a3'], '2026-11-20', 10)
+    expect(alloc.ok).toBe(true)
+
+    const ord = order('or_ani_b1')
+    expect(ord.auditStatus).toBe('approved')
+    expect(ord.reserveStatus).toBe('reserved')
+    expect(ord.expectStartDate).toBe('2026-11-20')
+    expect(ord.expectEndDate).toBe('2026-11-30')
+    expect(ord.reserveExpireAt).toBe('2026-11-22') // 拟入场日 + 2天
+    expect(ord.allocatedCageIds).toEqual(['cg_ani_a3'])
+  })
+
+  it('现场核验入住：预分配笼位一键转为在养 occupied，预付款正式划扣', () => {
+    allocateCages('or_ani_b1', ['cg_ani_a3'], '2026-11-20', 10)
+
+    // 现场直接入住转正
+    const entry = entryFeeding('or_ani_b1', ['cg_ani_a3'], '2026-11-20')
+    expect(entry.ok).toBe(true)
+
+    expect(data().cages.find((c) => c.id === 'cg_ani_a3')!.status).toBe('occupied')
+    const ord = order('or_ani_b1')
+    expect(ord.fulfillStatus).toBe('breeding')
+    expect(ord.feeStatus).toBe('charged')
+    expect(ord.reserveStatus).toBe('checked_in')
+  })
+
+  it('2天超时自动释放：逾期未到校自动释放笼位回 free，订单打回待重新排位', () => {
+    // 模拟排位在过去已超过2天的订单（拟入场：11-01，保留至：11-03）
+    allocateCages('or_ani_b1', ['cg_ani_a3'], '2026-11-01', 10)
+    expect(data().cages.find((c) => c.id === 'cg_ani_a3')!.status).toBe('reserved')
+
+    // 触发过期检查（当前时间 > 11-03）
+    const releasedCount = checkAndReleaseExpiredReservations()
+    expect(releasedCount).toBeGreaterThanOrEqual(1)
+
+    // 笼位恢复 free
+    expect(data().cages.find((c) => c.id === 'cg_ani_a3')!.status).toBe('free')
+
+    // 订单回退待确认
+    const ord = order('or_ani_b1')
+    expect(ord.auditStatus).toBe('pending')
+    expect(ord.reserveStatus).toBe('expired_released')
+    expect(ord.allocatedCageIds?.length).toBe(0)
+    expect(ord.history.some((h) => h.action.includes('释放'))).toBe(true)
+  })
+
+  it('消杀流转：完成消杀一键恢复 free', () => {
+    // 设某笼位为 cleaning
+    const cage = data().cages.find((c) => c.id === 'cg_ani_a3')!
+    cage.status = 'cleaning'
+
+    expect(completeCageCleaning('cg_ani_a3').ok).toBe(true)
+    expect(data().cages.find((c) => c.id === 'cg_ani_a3')!.status).toBe('free')
+
+    // 非 cleaning 状态再次调用被拒绝
+    expect(completeCageCleaning('cg_ani_a3').ok).toBe(false)
   })
 })

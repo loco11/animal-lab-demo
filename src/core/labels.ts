@@ -35,9 +35,9 @@ export const AUDIT_STATUS_TEXT: Record<AuditStatus, string> = {
 export const FULFILL_TEXT: Record<FulfillStatus, string> = {
   pending_out: '待出库',
   completed: '已完成',
-  pending_collect: '待汇总',
+  pending_collect: '待发给供应商',
   pending_send: '待发送',
-  sent: '已发送供应商',
+  sent: '汇总并发送厂商',
   incoming: '待入场',
   breeding: '在养',
   exited: '已退出',
