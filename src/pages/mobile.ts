@@ -408,12 +408,9 @@ export function mobilePage(host: HTMLElement): void {
 
           <!-- 表单主体卡片 -->
           <div class="apply-form-card">
-            <!-- 字段 1：品规选择（移动端专属底部抽屉选择器） -->
+            <!-- 字段 1：品规选择 -->
             <div class="apply-field">
-              <label class="apply-label">
-                <span>实验动物品系及规格</span>
-                <span class="apply-label-hint">贵州省实验动物工程技术中心</span>
-              </label>
+              <label class="apply-label">实验动物品系及规格</label>
               <div class="mobile-picker-trigger" id="trigger-service" tabindex="0">
                 <span class="mobile-picker-trigger__text" id="trigger-service-text"></span>
                 <span class="mobile-picker-trigger__arrow">
@@ -439,16 +436,13 @@ export function mobilePage(host: HTMLElement): void {
             `
                 : `
               <div class="apply-field">
-                <label class="apply-label">
-                  <span>申购数量（只）</span>
-                  <span class="apply-label-hint">中心核验配发</span>
-                </label>
+                <label class="apply-label">申购数量（只）</label>
                 <input type="number" class="apply-input" id="apply-quantity" value="20" min="1" max="100" />
               </div>
             `
             }
 
-            <!-- 字段 3：外购送达校区（移动端专属底部抽屉选择器，仅外购） -->
+            <!-- 字段 3：外购送达校区（仅外购） -->
             ${
               kind === 'external'
                 ? `
@@ -465,12 +459,9 @@ export function mobilePage(host: HTMLElement): void {
                 : ''
             }
 
-            <!-- 字段 4：关联科研项目经费（移动端专属底部抽屉选择器） -->
+            <!-- 字段 4：关联科研项目经费 -->
             <div class="apply-field">
-              <label class="apply-label">
-                <span>关联科研项目经费（支持点击选择）</span>
-                <span class="apply-label-hint" style="color:#059669;">导师孙志伟授权</span>
-              </label>
+              <label class="apply-label">关联科研项目经费</label>
               <div class="mobile-picker-card" id="trigger-project" tabindex="0">
                 <div class="mobile-picker-card__main">
                   <span class="mobile-picker-card__name" id="trigger-project-name"></span>
@@ -481,29 +472,17 @@ export function mobilePage(host: HTMLElement): void {
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
                 </div>
               </div>
-              <span style="font-size:11px;color:#64748b;margin-top:2px;">
-                * 审核办结后将由学校统一结算系统从所选科研项目直接划扣，师生无需个人垫资与贴票报销。
-              </span>
             </div>
 
-            <!-- 字段 5：实验说明（多行文本域 textarea） -->
+            <!-- 字段 5：实验用途或课题说明 -->
             <div class="apply-field">
-              <label class="apply-label">
-                <span>实验用途或课题说明（多行文本）</span>
-                <span class="apply-label-hint">IACUC 伦理审核依据</span>
-              </label>
+              <label class="apply-label">实验用途或课题说明</label>
               <textarea
                 class="apply-textarea"
                 id="apply-remark"
                 rows="3"
-                placeholder="请输入详细实验用途（如：贵州特有中草药抗肿瘤分子机制体内药效评价，已通过 IACUC 动物伦理审查）。"
+                placeholder="请输入实验用途或课题说明..."
               >用于中草药活性分子抗肿瘤药效体内模型实验，已取得伦理审查批件</textarea>
-              <div class="apply-quick-tags">
-                <span class="apply-quick-tag" data-tag="抗肿瘤药效评价">＋ 抗肿瘤药效</span>
-                <span class="apply-quick-tag" data-tag="药代动力学分析">＋ 药代动力学</span>
-                <span class="apply-quick-tag" data-tag="免疫缺陷对照模型">＋ 免疫对照</span>
-                <span class="apply-quick-tag" data-tag="教学实验验证">＋ 教学实验</span>
-              </div>
             </div>
           </div>
         </div>
@@ -529,16 +508,7 @@ export function mobilePage(host: HTMLElement): void {
       window.scrollTo(0, 0)
     })
 
-    // 快捷标签填词
     const remarkArea = slot.querySelector('#apply-remark') as HTMLTextAreaElement
-    slot.querySelectorAll('.apply-quick-tag').forEach((tag) => {
-      tag.addEventListener('click', () => {
-        const text = tag.getAttribute('data-tag') || ''
-        if (remarkArea && text) {
-          remarkArea.value = remarkArea.value ? `${remarkArea.value}；${text}` : text
-        }
-      })
-    })
 
     const qtyInput = slot.querySelector('#apply-quantity') as HTMLInputElement
     const daysInput = slot.querySelector('#apply-days') as HTMLInputElement | null
