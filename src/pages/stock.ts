@@ -2,12 +2,14 @@
 
 import {
   adjustStock,
+  availableStockOf,
   batchStockCheck,
   categoryDef,
   categoryText,
   createStockItem,
   enabledCategories,
   importStockItems,
+  lockedStockOf,
   stockIn,
   stockLoss,
   type StockImportRow,
@@ -222,7 +224,19 @@ function renderByTab(page: HTMLElement, toolbar: HTMLElement): void {
           { key: 'spec', title: '规格', ellipsis: true },
           { key: 'category', title: '类别', render: (r) => categoryText(r.category) },
           { key: 'location', title: '存放位置' },
-          { key: 'quantity', title: '当前库存', align: 'right', render: (r) => `${r.quantity}${r.unit}` },
+          {
+            key: 'quantity',
+            title: '在库 / 可用',
+            align: 'right',
+            render: (r) => {
+              const locked = lockedStockOf(r.id)
+              const avail = availableStockOf(r.id)
+              if (locked > 0) {
+                return `<strong>${r.quantity}</strong> ${r.unit}<br><span style="font-size:11px;color:#059669;font-weight:600;">可用 ${avail}</span> ｜ <span style="font-size:11px;color:#d97706;">锁定 ${locked}</span>`
+              }
+              return `<strong>${r.quantity}</strong> ${r.unit}`
+            },
+          },
           { key: 'safe', title: '安全库存', align: 'right', render: (r) => `${r.safeStock}${r.unit}` },
           {
             key: 'warn',

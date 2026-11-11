@@ -1,7 +1,23 @@
 /** 状态字典与展示文本：统一口径，页面与账单一致 */
 
-import type { AuditMode, AuditStatus, FulfillStatus, OrderKind } from '../types'
+import type { AuditMode, AuditStatus, CageStatus, FulfillStatus, OrderKind } from '../types'
 import type { TagTone } from '../ui'
+
+export const CAGE_STATUS_TEXT: Record<CageStatus, string> = {
+  free: '空闲可用',
+  reserved: '预分配锁定',
+  occupied: '在养使用',
+  cleaning: '待消杀',
+  disabled: '维护停用',
+}
+
+export function cageStatusTone(s: CageStatus): TagTone {
+  if (s === 'free') return 'success'
+  if (s === 'reserved') return 'warning'
+  if (s === 'occupied') return 'primary'
+  if (s === 'cleaning') return 'primary'
+  return 'default'
+}
 
 export const AUDIT_MODE_TEXT: Record<AuditMode, string> = {
   none: '无需审核',

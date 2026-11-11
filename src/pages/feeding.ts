@@ -1,7 +1,9 @@
 /** 饲养管理：待入场、在养、已退出；入场、笼位变更、耗材领用、退出与区间计费 */
 
 import {
+  allocateCages,
   changeCages,
+  checkAndReleaseExpiredReservations,
   entryFeeding,
   exitFeeding,
   freeCages,
@@ -12,11 +14,11 @@ import {
   supplyUsagesOf,
   takeSupply,
 } from '../core/biz/feeding'
-import { listOrders, approveOrder } from '../core/biz/orders'
+import { listOrders, rejectOrder } from '../core/biz/orders'
 import { categoryDef, categoryText } from '../core/biz/stock'
 import { auditPassed } from '../core/labels'
 import { data, scoped } from '../core/data'
-import { daysBetween, escapeHtml, moneyText, todayStr } from '../core/utils'
+import { addDays, daysBetween, escapeHtml, moneyText, todayStr } from '../core/utils'
 import type { Feeding, Order } from '../types'
 import type { PageDef } from '../router'
 import { currentPath, currentQuery, navigate, rerender } from '../router'
@@ -45,6 +47,7 @@ function syncFromRoute(): void {
 export const feedingPage: PageDef = {
   title: '饲养管理',
   render(host: HTMLElement) {
+    checkAndReleaseExpiredReservations()
     syncFromRoute()
     const page = pageShell(host, {
     })
@@ -115,11 +118,21 @@ function renderIncoming(host: HTMLElement): void {
   // 规范工具栏：与 Attachment 2 保持一致
   const toolbar = el('div', 'toolbar')
   toolbar.innerHTML = `
-    <div class="toolbar__actions">
-      <span class="hint">待入场清单：当前共 <strong>${rows.length}</strong> 笔饲养订单待审核排位及现场办理入笼（基础预付费用入场即扣且不可退）</span>
+    <div class="toolbar__actions" style="display:flex;justify-content:space-between;width:100%;align-items:center;">
+      <span class="hint">待入场清单：当前共 <strong>${rows.length}</strong> 笔饲养订单待审核排位及现场办理入住（审核同意后自动预留锁定 2 天，逾期未办理自动释放重排）</span>
+      <button class="btn btn-default" id="btn-refresh-expire" style="font-size:11.5px;padding:3px 10px;height:28px;">🔄 检查逾期保留释放</button>
     </div>
   `
   host.appendChild(toolbar)
+  toolbar.querySelector('#btn-refresh-expire')?.addEventListener('click', () => {
+    const released = checkAndReleaseExpiredReservations()
+    if (released > 0) {
+      toast(`检测到 ${released} 笔预约已超期2天未办理入住，已自动释放锁定的物理笼位并退回重排`, 'warning')
+      rerender()
+    } else {
+      toast('暂无逾期预约，所有已排位笼位均在2天保留保护期内', 'success')
+    }
+  })
 
   renderTable<Order>(
     host,
@@ -128,14 +141,15 @@ function renderIncoming(host: HTMLElement): void {
         { key: 'code', title: '订单编号', width: '130px' },
         { key: 'item', title: '服务 / 规格', render: (r) => `${r.itemName}｜${r.spec}` },
         {
-          key: 'quantity',
-          title: '预订规模',
-          align: 'right',
-          width: '130px',
-          render: (r) =>
-            r.feedDays
-              ? `<strong>${r.quantity} 笼</strong><br><span style="font-size:11px;color:#64748b;">${r.animalCount || 20} 只 · ${r.feedDays} 天</span>`
-              : `${r.quantity}${r.unit}`,
+          key: 'schedule',
+          title: '拟入住区间 & 规模',
+          width: '180px',
+          render: (r) => {
+            const range = r.expectStartDate
+              ? `<strong>${r.expectStartDate}</strong> 至 <strong>${r.expectEndDate || '—'}</strong><br><span style="font-size:11px;color:#0284c7;">拟养 ${r.feedDays || 14} 天</span>`
+              : `<span style="color:#64748b;">拟养 ${r.feedDays || 14} 天</span>`
+            return `${range}<br><span style="font-size:11px;color:#334155;">预订 <strong>${r.quantity} 笼</strong>（${r.animalCount || 20} 只）</span>`
+          },
         },
         {
           key: 'applicant',
@@ -153,25 +167,58 @@ function renderIncoming(host: HTMLElement): void {
         },
         {
           key: 'audit',
-          title: '排位审核',
-          width: '100px',
-          render: (r) => (auditPassed(r.auditStatus) ? tagHtml('已同意·待入住', 'success') : tagHtml('待排位审核', 'warning')),
+          title: '时空排位与保留状态',
+          width: '170px',
+          render: (r) => {
+            if (r.reserveStatus === 'expired_released') {
+              return tagHtml('逾期释放·待重排', 'danger') + '<br><span style="font-size:10.5px;color:#ef4444;">已超期2天自动释放</span>'
+            }
+            if (auditPassed(r.auditStatus)) {
+              const cageCodes = r.allocatedCageIds?.length
+                ? r.allocatedCageIds
+                    .map((id) => data().cages.find((c) => c.id === id)?.code || id)
+                    .join('、')
+                : '已指定'
+              return (
+                tagHtml('已预分配·待入住', 'success') +
+                `<br><span style="font-size:11px;color:#0284c7;font-weight:600;">锁定: ${cageCodes}</span>` +
+                `<br><span style="font-size:10px;color:#854d0e;">保留至: ${r.reserveExpireAt || '—'}</span>`
+              )
+            }
+            return tagHtml('待排位审核', 'warning') + '<br><span style="font-size:10.5px;color:#64748b;">未锁定物理笼位</span>'
+          },
         },
       ],
       rows,
-      actions: (row) =>
-        [
-          auditPassed(row.auditStatus)
-            ? { text: '办理现场入住', act: 'entry' }
-            : { text: '审核排位同意', act: 'approve' },
-        ] as RowAction[],
+      actions: (row) => {
+        if (auditPassed(row.auditStatus)) {
+          return [
+            { text: '办理现场入住', act: 'entry' },
+            { text: '调整排位', act: 'allocate' },
+          ]
+        }
+        if (row.reserveStatus === 'expired_released') {
+          return [
+            { text: '重新排位预分配', act: 'allocate' },
+            { text: '退回', act: 'reject', danger: true },
+          ]
+        }
+        return [
+          { text: '审核排位预分配', act: 'allocate' },
+          { text: '退回', act: 'reject', danger: true },
+        ]
+      },
       queryActive: Object.values(view.filters).some(Boolean),
       emptyText: '没有待入场的饲养订单',
     },
     {
       onAction: (act, row) => {
         if (act === 'entry') runGuarded('feeding:entry', () => openEntry(row))
-        if (act === 'approve') runGuarded('order:approve', () => showResult(approveOrder(row.id)))
+        if (act === 'allocate') runGuarded('order:approve', () => openAllocateDialog(row))
+        if (act === 'reject') {
+          const reason = prompt('请输入退回原因：')
+          if (reason) runGuarded('order:reject', () => showResult(rejectOrder(row.id, reason)))
+        }
       },
     },
   )
@@ -297,25 +344,190 @@ function renderFeedingTable(host: HTMLElement, rows: Feeding[]): void {
 
 /* ---------------- 弹窗 ---------------- */
 
+function openAllocateDialog(order: Order): void {
+  let curStart = order.expectStartDate || addDays(todayStr(), 1)
+  let curDays = order.feedDays || 14
+  let selectedCageIds = order.allocatedCageIds ? [...order.allocatedCageIds] : []
+
+  function buildDialogContent(): string {
+    const end = addDays(curStart, curDays)
+    const expire = addDays(curStart, 2)
+    const availableCages = freeCages(curStart, end)
+
+    return `
+      <div style="margin-bottom:12px;font-size:12px;line-height:1.6;background:#f0fdf4;border:1px solid #bbf7d0;padding:10px 12px;border-radius:6px;color:#166534;">
+        <strong>💡 时空排位与2天保留规则：</strong><br>
+        ① <strong>时空可用性检测</strong>：系统已自动根据所选区间 [${curStart} ~ ${end}] 筛选出期间无任何冲突占用、非停用、非消杀中的空闲物理笼位。<br>
+        ② <strong>2天保留倒计时</strong>：审核同意并预锁定后，系统将为该课题组保留至 <strong>${expire} 23:59</strong>；若学生超过 2 天未到校办理入住，系统将自动释放笼位回空闲池，并退回待重新排位。<br>
+        ③ <strong>同机架就近分配</strong>：申请预订 <strong>${order.quantity} 笼</strong>（拟养 ${order.animalCount || 20} 只），建议优先勾选同一房间同一机架的连续笼位。
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div class="field">
+          <span class="field__label">拟入场日期 *</span>
+          <input type="date" id="alloc-start-date" value="${curStart}" />
+        </div>
+        <div class="field">
+          <span class="field__label">拟饲养天数 (天) *</span>
+          <input type="number" id="alloc-feed-days" value="${curDays}" min="1" max="180" />
+        </div>
+      </div>
+
+      <div style="font-size:12px;color:#475569;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+        <span>可选时空空闲笼位（共 <strong>${availableCages.length}</strong> 笼可用，已选 <strong id="alloc-selected-count" style="color:#2563eb;">${selectedCageIds.length}</strong> / 目标 ${order.quantity} 笼）：</span>
+        <span style="font-size:11px;color:#0369a1;">拟退场日：<strong>${end}</strong> ｜ 最晚保留至：<strong>${expire}</strong></span>
+      </div>
+
+      ${
+        availableCages.length
+          ? `<div class="table-wrap" style="max-height:220px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:4px;">
+              <table style="width:100%;font-size:12px;">
+                <thead>
+                  <tr style="background:#f8fafc;">
+                    <th style="width:40px;text-align:center;">选择</th>
+                    <th>笼位编号</th>
+                    <th>机架与房间</th>
+                    <th>环境规格</th>
+                    <th>容量标准</th>
+                  </tr>
+                </thead>
+                <tbody id="alloc-cage-tbody">
+                  ${availableCages
+                    .map((c) => {
+                      const isChecked = selectedCageIds.includes(c.id)
+                      return `
+                        <tr>
+                          <td style="text-align:center;"><input type="checkbox" value="${c.id}" data-alloc-cage="${c.id}" ${isChecked ? 'checked' : ''} /></td>
+                          <td><strong style="font-family:monospace;font-size:13px;color:#0f172a;">${escapeHtml(c.code)}</strong></td>
+                          <td>${escapeHtml(c.rack || 'A架')} ｜ ${escapeHtml(c.room)}</td>
+                          <td>${c.env === 'SPF' ? '<span style="color:#059669;font-weight:600;">SPF屏障IVC</span>' : '普通环境'}</td>
+                          <td>${c.capacity} 只/笼</td>
+                        </tr>
+                      `
+                    })
+                    .join('')}
+                </tbody>
+              </table>
+            </div>`
+          : '<div class="state-area" style="padding:20px 0;"><p class="state-area__text">该时间段内暂无可用的空闲物理笼位，请调整入场日期或协调机架</p></div>'
+      }
+    `
+  }
+
+  const dlg = openDialog({
+    title: `审核排位预分配物理笼位 · 订单 ${order.code}（${order.applicantName}）`,
+    bodyHtml: `<div id="alloc-dialog-wrapper">${buildDialogContent()}</div>`,
+    wide: true,
+    actions: [
+      { text: '取消' },
+      {
+        text: '同意排位并锁定笼位',
+        primary: true,
+        keepOpen: true,
+        onClick: () => {
+          if (!selectedCageIds.length) {
+            toast('请至少选择一个物理笼位', 'warning')
+            return
+          }
+          const res = allocateCages(order.id, selectedCageIds, curStart, curDays)
+          if (res.ok) {
+            showResult(res)
+            dlg.close()
+            rerender()
+          } else {
+            toast(res.message, 'error')
+          }
+        },
+      },
+    ],
+  })
+
+  function attachListeners(): void {
+    const sInput = dlg.querySelector('#alloc-start-date') as HTMLInputElement | null
+    const dInput = dlg.querySelector('#alloc-feed-days') as HTMLInputElement | null
+
+    sInput?.addEventListener('change', () => {
+      curStart = sInput.value || todayStr()
+      refreshWrapper()
+    })
+    dInput?.addEventListener('input', () => {
+      curDays = parseInt(dInput.value || '14', 10) || 14
+      refreshWrapper()
+    })
+
+    dlg.querySelectorAll<HTMLInputElement>('input[data-alloc-cage]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const id = cb.value
+        if (cb.checked) {
+          if (!selectedCageIds.includes(id)) selectedCageIds.push(id)
+        } else {
+          selectedCageIds = selectedCageIds.filter((cid) => cid !== id)
+        }
+        const countEl = dlg.querySelector('#alloc-selected-count')
+        if (countEl) countEl.textContent = String(selectedCageIds.length)
+      })
+    })
+  }
+
+  function refreshWrapper(): void {
+    const wrapper = dlg.querySelector('#alloc-dialog-wrapper')
+    if (wrapper) {
+      wrapper.innerHTML = buildDialogContent()
+      attachListeners()
+    }
+  }
+
+  attachListeners()
+}
+
 function openEntry(order: Order): void {
-  const cages = freeCages(todayStr())
-  const bodyHtml =
-    `<div style="margin-bottom:12px;font-size:12px;line-height:1.6;background:#f0fdf4;border:1px solid #bbf7d0;padding:10px 12px;border-radius:6px;color:#166534;">
+  const allocated = order.allocatedCageIds || []
+  const preCages = data().cages.filter((c) => allocated.includes(c.id))
+  const entryDate = todayStr()
+
+  // 如果原本尚未预分配笼位（兼容历史单据），则回退允许现场挑选
+  const needsSelect = preCages.length === 0
+  const cages = needsSelect ? freeCages(todayStr()) : preCages
+
+  const bodyHtml = `
+    <div style="margin-bottom:12px;font-size:12px;line-height:1.6;background:#f0fdf4;border:1px solid #bbf7d0;padding:10px 12px;border-radius:6px;color:#166534;">
       <strong>💡 现场办理入住与扣缴规则：</strong><br>
-      ① <strong>真实起始日</strong>：办理当天（${todayStr()}）记为实验在养真实 Day 1。<br>
-      ② <strong>资金结转</strong>：现场办理入住即正式从科研项目划扣预付基础饲养费（<strong>不予退还</strong>）。<br>
-      ③ <strong>巡房合笼平衡</strong>：在养期间因合笼提前释放的笼位不退费，由中心线下补发等额饲料耗材。
-    </div>` +
-    `<div class="field"><span class="field__label">实际入场日期（Day 1） *</span><input type="date" id="fd-entry-date" value="${todayStr()}" /></div>` +
-    `<p class="hint">请核验动物数量及健康状况，勾选分配给该课题组的空闲物理笼位（建议按申请分配 ${order.quantity} 笼）：</p>` +
-    (cages.length
-      ? `<div class="table-wrap"><table><tbody>${cages
-          .map(
-            (c) =>
-              `<tr><td style="width:50px"><input type="checkbox" value="${c.id}" data-cage="${c.id}" /></td><td><strong>${c.code}</strong></td><td>${c.room}｜${c.env}</td><td>${c.capacity} 只/笼</td></tr>`,
-          )
-          .join('')}</tbody></table></div>`
-      : '<div class="state-area"><p class="state-area__text">没有可用空闲笼位</p></div>')
+      ① <strong>严格按原申请执行</strong>：现场核验动物健康检疫合格证，直接办理已预分配的 <strong>${allocated.length || order.quantity} 笼</strong>。<br>
+      ② <strong>真实起始日 (Day 1)</strong>：办理当天（${entryDate}）锁定为实验在养真实 Day 1。<br>
+      ③ <strong>资金结转</strong>：现场办理入住即正式从科研项目划扣预付基础饲养费（<strong>不予退还</strong>）。<br>
+      ④ <strong>合笼平衡</strong>：在养期间因合笼提前释放的笼位不退费，由中心线下补发等额全价饲料耗材。
+    </div>
+    <div class="field">
+      <span class="field__label">实际入场日期（Day 1） *</span>
+      <input type="date" id="fd-entry-date" value="${entryDate}" />
+    </div>
+    <div class="field">
+      <span class="field__label">核准分配的物理笼位：</span>
+      ${
+        !needsSelect
+          ? `<div style="display:flex;gap:8px;flex-wrap:wrap;padding:6px 0;">
+              ${preCages
+                .map(
+                  (c) =>
+                    `<span style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:4px 10px;border-radius:4px;font-weight:700;font-family:monospace;font-size:13px;">${escapeHtml(c.code)} (${c.room} · ${c.capacity}只/笼)</span>`,
+                )
+                .join('')}
+            </div>`
+          : cages.length
+            ? `<div class="table-wrap"><table><tbody>${cages
+                .map(
+                  (c) =>
+                    `<tr><td style="width:50px"><input type="checkbox" value="${c.id}" data-cage="${c.id}" /></td><td><strong>${c.code}</strong></td><td>${c.room}｜${c.env}</td><td>${c.capacity} 只/笼</td></tr>`,
+                )
+                .join('')}</tbody></table></div>`
+            : '<div class="state-area"><p class="state-area__text">没有可用空闲笼位</p></div>'
+      }
+    </div>
+    <div class="field">
+      <span class="field__label">现场核验动物备注</span>
+      <input type="text" id="fd-animal-note" value="${escapeHtml(order.spec || '')}" placeholder="核验健康状况及耳标编号..." />
+    </div>
+  `
 
   const dlg = openDialog({
     title: `办理现场入住与分配物理笼位 ${order.code}`,
@@ -329,13 +541,15 @@ function openEntry(order: Order): void {
         keepOpen: true,
         onClick: () => {
           const date = (dlg.querySelector('#fd-entry-date') as HTMLInputElement).value
-          const ids = [...dlg.querySelectorAll<HTMLInputElement>('input[data-cage]')]
-            .filter((i) => i.checked)
-            .map((i) => i.value)
-          const result = entryFeeding(order.id, ids, date)
+          const note = (dlg.querySelector('#fd-animal-note') as HTMLInputElement).value
+          const ids = needsSelect
+            ? [...dlg.querySelectorAll<HTMLInputElement>('input[data-cage]:checked')].map((i) => i.value)
+            : allocated
+          const result = entryFeeding(order.id, ids, date, note)
           if (result.ok) {
             showResult(result)
             dlg.close()
+            rerender()
           } else {
             toast(result.message, 'error')
           }

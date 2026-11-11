@@ -6,7 +6,7 @@ import { data, log, scoped, updateData } from '../data'
 import { addOrderEvent } from './orders'
 import { businessOut, categoryDef } from './stock'
 import { auditPassed } from '../labels'
-import { todayStr, uid, daysBetween, moneyText } from '../utils'
+import { todayStr, uid, daysBetween, moneyText, addDays } from '../utils'
 import { done, fail, type OpResult } from './result'
 
 export function listFeedings(): Feeding[] {
@@ -33,14 +33,27 @@ export function supplyUsagesOf(feedingId: string): SupplyUsage[] {
   return data().supplyUsages.filter((u) => u.feedingId === feedingId)
 }
 
-/** 某日开始可用空闲笼位：必须属于当前实验室、未停用、且当日无占用 */
-export function freeCages(fromDate: string): Cage[] {
-  const busy = new Set(
-    data()
-      .occupancies.filter((o) => o.end === null || o.end > fromDate)
-      .map((o) => o.cageId),
-  )
-  return scoped(data().cages).filter((c) => c.status !== 'disabled' && !busy.has(c.id))
+/** 某时间段内可用空闲笼位：属于当前实验室、未停用、非待消杀，且在 [fromDate, toDate] 无占用与预留 */
+export function freeCages(fromDate: string, toDate?: string, cageType?: string): Cage[] {
+  // 先触发清理过期预留
+  checkAndReleaseExpiredReservations()
+
+  const endDate = toDate || fromDate
+  const busy = new Set<string>()
+
+  data().occupancies.forEach((o) => {
+    // 检查时间是否有重合: o.start <= endDate && (o.end === null || o.end > fromDate)
+    if (o.start <= endDate && (o.end === null || o.end > fromDate)) {
+      busy.add(o.cageId)
+    }
+  })
+
+  return scoped(data().cages).filter((c) => {
+    if (c.status === 'disabled' || c.status === 'cleaning') return false
+    if (busy.has(c.id)) return false
+    if (cageType && c.cageType && c.cageType !== cageType) return false
+    return true
+  })
 }
 
 export function cageOccupiedCageIdsAt(date: string): Set<string> {
@@ -51,32 +64,212 @@ export function cageOccupiedCageIdsAt(date: string): Set<string> {
   )
 }
 
+/** 检查并自动释放逾期未到校的预留笼位（超过拟入场日 2 天） */
+export function checkAndReleaseExpiredReservations(): number {
+  const now = todayStr()
+  const orders = data().orders
+  const expiredOrders = orders.filter(
+    (o) =>
+      o.kind === 'breeding' &&
+      o.fulfillStatus === 'incoming' &&
+      o.reserveStatus === 'reserved' &&
+      o.reserveExpireAt &&
+      now > o.reserveExpireAt,
+  )
+
+  if (!expiredOrders.length) return 0
+
+  let releasedCount = 0
+  updateData((d) => {
+    let updatedCages = [...d.cages]
+    let updatedOccs = [...d.occupancies]
+    let updatedOrders = [...d.orders]
+
+    expiredOrders.forEach((ord) => {
+      releasedCount++
+      const allocated = ord.allocatedCageIds || []
+      // 清除该订单的 reserve 占位
+      updatedOccs = updatedOccs.filter((o) => !(o.orderId === ord.id && o.type === 'reserve'))
+      // 释放笼位
+      updatedCages = updatedCages.map((c) => {
+        if (allocated.includes(c.id) && c.status === 'reserved') {
+          return { ...c, status: 'free' as const }
+        }
+        return c
+      })
+      // 退回订单至待确认重排
+      updatedOrders = updatedOrders.map((o) => {
+        if (o.id === ord.id) {
+          return {
+            ...o,
+            auditStatus: 'pending' as const,
+            reserveStatus: 'expired_released' as const,
+            allocatedCageIds: [],
+            updatedAt: now,
+            history: [
+              ...o.history,
+              {
+                at: now,
+                actor: '系统自动风控',
+                action: '逾期未到校，自动释放预分配笼位',
+                note: `拟入场日为 ${ord.expectStartDate || '—'}，最晚保留至 ${ord.reserveExpireAt}；现已超期2天，已释放预留笼位并退回待确认重新排位`,
+              },
+            ],
+          }
+        }
+        return o
+      })
+    })
+
+    return {
+      ...d,
+      cages: updatedCages,
+      occupancies: updatedOccs,
+      orders: updatedOrders,
+    }
+  })
+
+  if (releasedCount > 0) {
+    log(`系统自动释放 ${releasedCount} 笔逾期未办理入住的预留笼位`, 'feeding')
+  }
+  return releasedCount
+}
+
+/** 审核排位与预分配锁定物理笼位 */
+export function allocateCages(
+  orderId: string,
+  cageIds: string[],
+  startDate?: string,
+  feedDays?: number,
+): OpResult {
+  const guard = assertAction('order:approve')
+  if (!guard.ok) return fail(guard.message)
+
+  const order = data().orders.find((o) => o.id === orderId)
+  if (!order) return fail('订单不存在')
+  if (order.kind !== 'breeding') return fail('只有饲养订单需要排位分配笼位')
+  if (order.fulfillStatus !== 'incoming') return fail('订单不在待入场状态')
+  if (!cageIds.length) return fail('请至少选择一个物理笼位')
+
+  const user = getCurrentUser()
+  const start = startDate || order.expectStartDate || todayStr()
+  const days = feedDays || order.feedDays || 14
+  const end = addDays(start, days)
+  const reserveExpireAt = addDays(start, 2) // 拟入场日 + 2天保留
+
+  const cages = data().cages.filter((c) => cageIds.includes(c.id))
+  if (cages.length !== cageIds.length) return fail('部分笼位不存在')
+  if (cages.some((c) => c.labId !== user.labId)) return fail('不能选用其他实验室的笼位')
+  if (cages.some((c) => c.status === 'disabled')) return fail('已停用的笼位不能排位')
+  if (cages.some((c) => c.status === 'cleaning')) return fail('待消杀中的笼位不可预分配')
+
+  // 冲突排查（忽略自身以前可能存在的 reserve）
+  const conflictOcc = data().occupancies.filter(
+    (o) =>
+      cageIds.includes(o.cageId) &&
+      !(o.orderId === order.id && o.type === 'reserve') &&
+      o.start <= end &&
+      (o.end === null || o.end > start),
+  )
+  if (conflictOcc.length) {
+    const conflictCageIds = [...new Set(conflictOcc.map((o) => o.cageId))]
+    const names = cages.filter((c) => conflictCageIds.includes(c.id)).map((c) => c.code)
+    return fail(`笼位 ${names.join('、')} 在区间 [${start} ~ ${end}] 已被占用或已有其他预约锁定`)
+  }
+
+  const now = todayStr()
+  updateData((d) => {
+    const cleanOcc = d.occupancies.filter((o) => !(o.orderId === order.id && o.type === 'reserve'))
+    const reserveOccs: CageOccupancy[] = cages.map((c) => ({
+      id: uid('oc'),
+      labId: order.labId,
+      cageId: c.id,
+      orderId: order.id,
+      type: 'reserve',
+      start,
+      end,
+      expireAt: reserveExpireAt,
+      reason: '排位预分配锁定',
+      operator: user.name,
+      createdAt: now,
+    }))
+
+    return {
+      ...d,
+      occupancies: [...reserveOccs, ...cleanOcc],
+      cages: d.cages.map((c) => (cageIds.includes(c.id) ? { ...c, status: 'reserved' as const } : c)),
+      orders: d.orders.map((o) =>
+        o.id === order.id
+          ? {
+              ...o,
+              auditStatus: 'approved' as const,
+              reserveStatus: 'reserved' as const,
+              allocatedCageIds: cageIds,
+              expectStartDate: start,
+              expectEndDate: end,
+              feedDays: days,
+              reserveExpireAt,
+              updatedAt: now,
+              history: [
+                ...o.history,
+                {
+                  at: now,
+                  actor: user.name,
+                  action: '审核排位同意，锁定物理笼位',
+                  note: `预分配物理笼位：${cages.map((c) => c.code).join('、')}；拟入住区间：${start} ~ ${end}；最晚保留至 ${reserveExpireAt} 23:59（超期2天未到将自动释放）`,
+                },
+              ],
+            }
+          : o,
+      ),
+    }
+  })
+
+  log(`订单 ${order.code} 完成时空排位，锁定 ${cageIds.length} 个笼位`, 'feeding', order.id)
+  return done(`审核排位成功！已锁定 ${cages.map((c) => c.code).join('、')}，最晚保留至 ${reserveExpireAt}`)
+}
+
 /* ---------------- 入场 ---------------- */
 
-export function entryFeeding(orderId: string, cageIds: string[], entryAt: string, animalNote = ''): OpResult {
+export function entryFeeding(
+  orderId: string,
+  cageIds?: string[],
+  entryAt?: string,
+  animalNote = '',
+): OpResult {
   const guard = assertAction('feeding:entry')
   if (!guard.ok) return fail(guard.message)
 
   const order = data().orders.find((o) => o.id === orderId)
   if (!order) return fail('订单不存在')
   if (order.kind !== 'breeding') return fail('只有饲养订单需要入场')
-  if (!auditPassed(order.auditStatus)) return fail('订单未通过确认，不能入场')
+  if (!auditPassed(order.auditStatus)) return fail('订单未通过排位确认，不能入场')
   if (order.fulfillStatus !== 'incoming') return fail('该订单不在待入场状态')
-  if (!entryAt) return fail('请选择入场日期')
-  if (!cageIds.length) return fail('请至少分配一个笼位')
+
+  const actualEntryAt = entryAt || todayStr()
+  if (order.reserveExpireAt && actualEntryAt > order.reserveExpireAt) {
+    return fail(`该预约已超过最晚保留期限（${order.reserveExpireAt}），请管理员重新排位`)
+  }
+
+  // 严格按原分配或传入的笼位
+  const targetCageIds = cageIds && cageIds.length ? cageIds : order.allocatedCageIds || []
+  if (!targetCageIds.length) return fail('该订单尚未分配物理笼位，请先进行排位')
 
   const user = getCurrentUser()
-  const cages = data().cages.filter((c) => cageIds.includes(c.id))
-  if (cages.length !== cageIds.length) return fail('选择的笼位不存在')
+  const cages = data().cages.filter((c) => targetCageIds.includes(c.id))
+  if (cages.length !== targetCageIds.length) return fail('选择的笼位不存在')
   if (cages.some((c) => c.labId !== user.labId)) return fail('不能选用其他实验室的笼位')
   if (cages.some((c) => c.status === 'disabled')) return fail('已停用的笼位不能用于入场')
 
+  // 冲突检查：检查是否有除本订单预留以外的实际占用冲突
   const busy = new Set<string>()
   data().occupancies.forEach((o) => {
-    if (o.end === null || o.end > entryAt) busy.add(o.cageId)
+    // 排除本订单的预留占位
+    if (o.orderId === order.id && o.type === 'reserve') return
+    if (o.end === null || o.end > actualEntryAt) busy.add(o.cageId)
   })
   const conflict = cages.filter((c) => busy.has(c.id))
-  if (conflict.length) return fail(`笼位 ${conflict.map((c) => c.code).join('、')} 在 ${entryAt} 已被占用`)
+  if (conflict.length) return fail(`笼位 ${conflict.map((c) => c.code).join('、')} 在 ${actualEntryAt} 已被占用`)
 
   const feedingId = uid('fd')
   const now = todayStr()
@@ -92,8 +285,8 @@ export function entryFeeding(orderId: string, cageIds: string[], entryAt: string
         quantity: order.quantity,
         unitPriceFen: order.unitPriceFen,
         status: 'breeding',
-        entryAt,
-        cageIds,
+        entryAt: actualEntryAt,
+        cageIds: targetCageIds,
       },
       ...d.feedings,
     ],
@@ -103,30 +296,53 @@ export function entryFeeding(orderId: string, cageIds: string[], entryAt: string
         labId: order.labId,
         cageId: c.id,
         feedingId,
-        start: entryAt,
+        orderId: order.id,
+        type: 'actual',
+        start: actualEntryAt,
         end: null,
-        reason: '入场占用',
+        reason: '现场核验入住',
         operator: user.name,
         createdAt: now,
       })),
-      ...d.occupancies,
+      // 清理该订单先前的 reserve 预留占位
+      ...d.occupancies.filter((o) => !(o.orderId === order.id && o.type === 'reserve')),
     ],
-    cages: d.cages.map((c) => (cageIds.includes(c.id) ? { ...c, status: 'occupied' as const } : c)),
+    cages: d.cages.map((c) => (targetCageIds.includes(c.id) ? { ...c, status: 'occupied' as const } : c)),
     orders: d.orders.map((o) =>
       o.id === order.id
-        ? { ...o, fulfillStatus: 'breeding' as const, feeStatus: 'charged' as const, updatedAt: now }
+        ? {
+            ...o,
+            fulfillStatus: 'breeding' as const,
+            feeStatus: 'charged' as const,
+            reserveStatus: 'checked_in' as const,
+            allocatedCageIds: targetCageIds,
+            updatedAt: now,
+          }
         : o,
     ),
   }))
 
   addOrderEvent(order.id, {
-    at: entryAt,
+    at: actualEntryAt,
     actor: user.name,
     action: '现场核验入住，正式划扣预付基础饲养费',
-    note: `分配物理笼位：${cages.map((c) => c.code).join('、')}，基础费用已正式结转中心账户`,
+    note: `分配物理笼位：${cages.map((c) => c.code).join('、')}，记为真实 Day 1，基础费用已正式结转中心账户`,
   })
-  log(`饲养订单 ${order.code} 入场，占用 ${cageIds.length} 个笼位`, 'feeding', feedingId)
-  return done(`入场成功，占用 ${cageIds.length} 个笼位`, feedingId)
+  log(`饲养订单 ${order.code} 入场，占用 ${targetCageIds.length} 个笼位`, 'feeding', feedingId)
+  return done(`入场成功，占用 ${targetCageIds.length} 个笼位`, feedingId)
+}
+
+/** 笼位完成消杀，恢复空闲 */
+export function completeCageCleaning(cageId: string): OpResult {
+  const cage = data().cages.find((c) => c.id === cageId)
+  if (!cage) return fail('笼位不存在')
+  if (cage.status !== 'cleaning') return fail('该笼位不在待消杀状态')
+  updateData((d) => ({
+    ...d,
+    cages: d.cages.map((c) => (c.id === cageId ? { ...c, status: 'free' as const } : c)),
+  }))
+  log(`笼位 ${cage.code} 完成清洗消杀，恢复空闲`, 'cage', cageId)
+  return done(`笼位 ${cage.code} 已完成消杀，恢复空闲可用`)
 }
 
 /* ---------------- 笼位变更 ---------------- */
@@ -190,7 +406,7 @@ export function changeCages(input: CageChangeInput): OpResult {
       input.addCageIds.includes(c.id)
         ? { ...c, status: 'occupied' as const }
         : input.removeCageIds.includes(c.id)
-          ? { ...c, status: 'free' as const }
+          ? { ...c, status: 'cleaning' as const }
           : c,
     ),
     feedings: d.feedings.map((f) =>
@@ -238,7 +454,7 @@ export function changeCages(input: CageChangeInput): OpResult {
 
 /* ---------------- 退出 ---------------- */
 
-export function exitFeeding(feedingId: string, exitAt: string, reason: string): OpResult {
+export function exitFeeding(feedingId: string, exitAt: string, reason: string, toCleaning = false): OpResult {
   const guard = assertAction('feeding:exit')
   if (!guard.ok) return fail(guard.message)
   const feeding = feedingById(feedingId)
@@ -257,7 +473,9 @@ export function exitFeeding(feedingId: string, exitAt: string, reason: string): 
     occupancies: d.occupancies.map((o) =>
       o.feedingId === feeding.id && o.end === null ? { ...o, end: exitAt, reason: `退出：${reason.trim()}` } : o,
     ),
-    cages: d.cages.map((c) => (released.includes(c.id) ? { ...c, status: 'free' as const } : c)),
+    cages: d.cages.map((c) =>
+      released.includes(c.id) ? { ...c, status: toCleaning ? ('cleaning' as const) : ('free' as const) } : c,
+    ),
     feedings: d.feedings.map((f) =>
       f.id === feeding.id ? { ...f, status: 'exited' as const, exitAt, exitReason: reason.trim(), cageIds: [] } : f,
     ),

@@ -126,7 +126,8 @@ export const orderPage: PageDef = {
     toolbar.innerHTML =
       '<div class="toolbar__actions"><button class="btn btn-primary" data-act="agent">代录外部客户订单</button>' +
       '<button class="btn btn-default" data-act="mobile" style="color:#16529b;border-color:#cbd5e1;background:#f0f5fb;font-weight:600">移动办事端 (企业微信)</button>' +
-      '<button class="btn btn-default" data-act="export">导出当前列表</button></div>'
+      '<button class="btn btn-default" data-act="export">导出当前列表</button></div>' +
+      '<span class="hint" style="color:#059669;font-weight:600;">💡 窗口线下核销快捷通道：学生报姓名（如“张立”）或单号，在上方检索后点击【出库交付】，一步完成库存核减、交接归档与扣款。</span>'
     toolbar.querySelector('button[data-act="agent"]')?.addEventListener('click', () => {
       runGuarded('order:create', () => openAgentDialog())
     })
@@ -260,12 +261,18 @@ function paginate<T>(list: T[]): T[] {
 
 function rowActions(row: Order): RowAction[] {
   const list: RowAction[] = [{ text: '详情', act: 'detail' }]
+  if (row.kind === 'internal' && row.fulfillStatus === 'pending_out') {
+    if (auditPassed(row.auditStatus)) {
+      list.push({ text: '出库交付', act: 'ship' })
+    } else {
+      list.push({ text: '核验出库交付', act: 'approve_and_ship' })
+      list.push({ text: '退回', act: 'reject', danger: true })
+    }
+    return list
+  }
   if (row.auditStatus === 'pending') {
     list.push({ text: '确认通过', act: 'approve' })
     list.push({ text: '退回', act: 'reject', danger: true })
-  }
-  if (row.kind === 'internal' && auditPassed(row.auditStatus) && row.fulfillStatus === 'pending_out') {
-    list.push({ text: '出库', act: 'ship' })
   }
   if (row.kind === 'external' && auditPassed(row.auditStatus)) {
     if (!plainFeeOf(row.id)) list.push({ text: '生成费用', act: 'genfee' })
@@ -284,6 +291,16 @@ function handleAction(act: string, row: Order): void {
       break
     case 'approve':
       runGuarded('order:approve', () => showResult(approveOrder(fresh.id)))
+      break
+    case 'approve_and_ship':
+      runGuarded('order:outstock', () => {
+        const approved = approveOrder(fresh.id)
+        if (!approved.ok) {
+          showResult(approved)
+          return
+        }
+        showResult(shipOrder(fresh.id))
+      })
       break
     case 'reject':
       runGuarded('order:reject', () => openReject(fresh))

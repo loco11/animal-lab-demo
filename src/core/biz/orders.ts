@@ -202,13 +202,18 @@ export function shipOrder(id: string): OpResult {
     fulfillStatus: 'completed',
     history: [
       ...order.history,
-      { at: todayStr(), actor: getCurrentUser().name, action: `出库 ${order.quantity}${order.unit}` },
-      { at: todayStr(), actor: '系统', action: '订单完成' },
+      {
+        at: todayStr(),
+        actor: getCurrentUser().name,
+        action: `现场交接核销并出库交付 ${order.quantity}${order.unit}`,
+        note: `申请人 ${order.applicantName} 线下报姓名核验完成实物提货交付`,
+      },
+      { at: todayStr(), actor: '系统', action: '订单完成交付，已划扣项目经费' },
     ],
   })
 
   const fee = generateInternalFee(orderById(order.id)!)
-  return done(`订单 ${order.code} 已出库并完成${fee.ok ? `，${fee.message}` : `，但${fee.message}`}`)
+  return done(`订单 ${order.code}（${order.applicantName}）已现场核销并出库交付完成${fee.ok ? `，${fee.message}` : `，但${fee.message}`}`)
 }
 
 /** 外购：管理员确认金额后手动生成费用；异常不自动改写 */

@@ -43,7 +43,9 @@ export const cagePage: PageDef = {
       [
         { key: 'all', text: '全部笼位', count: cages.length },
         { key: 'free', text: '🟢 空闲可用', count: cages.filter((c) => c.status === 'free').length },
-        { key: 'occupied', text: '🔵 在养占用', count: cages.filter((c) => c.status === 'occupied').length },
+        { key: 'reserved', text: '🟡 预分配锁定', count: cages.filter((c) => c.status === 'reserved').length },
+        { key: 'occupied', text: '🟣 在养使用', count: cages.filter((c) => c.status === 'occupied').length },
+        { key: 'cleaning', text: '🧼 待消杀', count: cages.filter((c) => c.status === 'cleaning').length },
         { key: 'disabled', text: '⚪ 维护停用', count: cages.filter((c) => c.status === 'disabled').length },
       ],
       view.tab,
@@ -107,11 +109,16 @@ export const cagePage: PageDef = {
     const freeCount = filtered.filter((c) => c.status === 'free').length
     const occCount = filtered.filter((c) => c.status === 'occupied').length
 
+    const resCount = filtered.filter((c) => c.status === 'reserved').length
+    const cleanCount = filtered.filter((c) => c.status === 'cleaning').length
+
     toolbar.innerHTML = `
-      <div style="font-size:12px;color:var(--c-desc);display:flex;align-items:center;gap:16px;">
+      <div style="font-size:12px;color:var(--c-desc);display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
         <span>筛选结果：共 <strong>${filtered.length}</strong> 笼</span>
-        <span style="color:var(--c-success);">🟢 空闲可用: <strong>${freeCount}</strong></span>
-        <span style="color:#0284c7;">🔵 在养占用: <strong>${occCount}</strong></span>
+        <span style="color:var(--c-success);">🟢 空闲: <strong>${freeCount}</strong></span>
+        <span style="color:#d97706;">🟡 预分配: <strong>${resCount}</strong></span>
+        <span style="color:#0284c7;">🟣 在养: <strong>${occCount}</strong></span>
+        <span style="color:#0ea5e9;">🧼 待消杀: <strong>${cleanCount}</strong></span>
       </div>
       <div class="toolbar__actions">
         <button class="btn btn-primary" data-act="create">新增笼位</button>
@@ -159,16 +166,17 @@ export const cagePage: PageDef = {
           {
             key: 'status',
             title: '当前状态',
-            render: (r) =>
-              r.status === 'occupied'
-                ? tagHtml('在养占用', 'primary')
-                : r.status === 'free'
-                  ? tagHtml('空闲可用', 'success')
-                  : tagHtml('维护停用', 'default'),
+            render: (r) => {
+              if (r.status === 'occupied') return tagHtml('在养使用', 'primary')
+              if (r.status === 'reserved') return tagHtml('预分配锁定', 'warning')
+              if (r.status === 'cleaning') return tagHtml('待消杀', 'primary')
+              if (r.status === 'free') return tagHtml('空闲可用', 'success')
+              return tagHtml('维护停用', 'default')
+            },
           },
           {
             key: 'usedBy',
-            title: '当前在养信息 / 单据',
+            title: '当前在养 / 预留信息',
             render: (r) => currentUsageDetail(r.id),
           },
           { key: 'note', title: '备注', render: (r) => r.note ?? '—' },
@@ -178,6 +186,7 @@ export const cagePage: PageDef = {
           [
             { text: '🎯 看板定位', act: 'locate' },
             { text: '占用历史', act: 'history' },
+            row.status === 'cleaning' ? { text: '完成消杀', act: 'clean' } : null,
             row.status === 'disabled' ? { text: '启用', act: 'enable' } : null,
             row.status !== 'occupied' && row.status !== 'disabled' ? { text: '停用', act: 'disable', danger: true } : null,
           ].filter(Boolean) as RowAction[],
@@ -190,6 +199,10 @@ export const cagePage: PageDef = {
             navigate(`/cage/board?focusCage=${encodeURIComponent(row.code)}`)
           }
           if (act === 'history') openHistory(row)
+          if (act === 'clean') runGuarded('cage:edit', () => {
+            showResult(completeCageCleaning(row.id))
+            rerender()
+          })
           if (act === 'enable') runGuarded('cage:edit', () => showResult(setCageStatus(row.id, 'free')))
           if (act === 'disable') runGuarded('cage:edit', () => showResult(setCageStatus(row.id, 'disabled')))
         },
@@ -320,7 +333,7 @@ function openHistory(cage: Cage): void {
     .map((o) => {
       const feeding = data().feedings.find((f) => f.id === o.feedingId)
       const order = feeding ? data().orders.find((x) => x.id === feeding.orderId) : undefined
-      const uses = feeding ? supplyUsagesOf(feeding.id).length : occupanciesOf(o.feedingId).length
+      const uses = feeding ? supplyUsagesOf(feeding.id).length : o.feedingId ? occupanciesOf(o.feedingId).length : 0
       return `<tr><td>${o.start}</td><td>${o.end ?? '<span style="color:#0284c7;font-weight:600;">占用中</span>'}</td><td>${order?.code ?? '—'}</td><td>${o.reason}</td><td>${o.operator}</td><td>${uses}</td></tr>`
     })
     .join('')

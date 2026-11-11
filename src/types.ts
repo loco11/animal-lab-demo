@@ -140,9 +140,15 @@ export interface Order {
   expectDate?: string
   remark?: string
   /** 饲养预定业务扩展字段 */
+  expectStartDate?: string
+  expectEndDate?: string
   feedDays?: number
   animalCount?: number
   recommendedCages?: number
+  allocatedCageIds?: string[]
+  reserveExpireAt?: string
+  reserveStatus?: 'none' | 'reserved' | 'expired_released' | 'checked_in'
+  cageType?: string
   iacucNo?: string
   preFreezeAmountFen?: number
   feeStatus?: 'frozen' | 'charged' | 'unpaid'
@@ -301,7 +307,7 @@ export interface PurchaseAnomaly {
 
 /* ---------------- 笼位与饲养 ---------------- */
 
-export type CageStatus = 'free' | 'occupied' | 'disabled'
+export type CageStatus = 'free' | 'occupied' | 'disabled' | 'reserved' | 'cleaning'
 
 export interface Cage {
   id: string
@@ -318,17 +324,24 @@ export interface Cage {
   floor?: string
   /** 所在机架编号，如：01号IVC小鼠笼架、02号大鼠笼架 */
   rack?: string
+  /** 物理笼型规格，如 SPF-IVC-MOUSE、SPF-IVC-RAT、COMMON-MOUSE 等 */
+  cageType?: string
 }
 
 export interface CageOccupancy {
   id: string
   labId: string
   cageId: string
-  feedingId: string
+  feedingId?: string
+  orderId?: string
+  /** 占用性质：审批时的预分配锁定，或现场入住后的真实在养 */
+  type?: 'reserve' | 'actual'
   /** 开始日含 */
   start: string
   /** 结束日不含；null 表示仍占用 */
   end: string | null
+  /** 预分配保留截止时间 (拟入场日 + 2天) */
+  expireAt?: string
   reason: string
   operator: string
   createdAt: string

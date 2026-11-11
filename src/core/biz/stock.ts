@@ -457,3 +457,21 @@ export function importStockItems(rows: StockImportRow[]): StockImportResult {
     failed,
   }
 }
+
+/* ---------------- 可用与锁定库存计算 ---------------- */
+
+/** 计算品目已被未出库自产订单占用的锁定库存 */
+export function lockedStockOf(itemId: string): number {
+  return data().orders
+    .filter((o) => o.kind === 'internal' && o.stockItemId === itemId && o.fulfillStatus === 'pending_out')
+    .reduce((sum, o) => sum + (o.quantity || 0), 0)
+}
+
+/** 计算品目当前实时可用库存（实际在库 - 未出库预留锁定） */
+export function availableStockOf(itemId: string): number {
+  const item = data().stockItems.find((s) => s.id === itemId)
+  if (!item) return 0
+  const locked = lockedStockOf(itemId)
+  return Math.max(0, item.quantity - locked)
+}
+
