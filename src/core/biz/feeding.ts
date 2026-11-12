@@ -49,7 +49,7 @@ export function freeCages(fromDate: string, toDate?: string, cageType?: string):
   })
 
   return scoped(data().cages).filter((c) => {
-    if (c.status === 'disabled' || c.status === 'cleaning') return false
+    if (c.status === 'disabled') return false
     if (busy.has(c.id)) return false
     if (cageType && c.cageType && c.cageType !== cageType) return false
     return true
@@ -161,7 +161,6 @@ export function allocateCages(
   if (cages.length !== cageIds.length) return fail('部分笼位不存在')
   if (cages.some((c) => c.labId !== user.labId)) return fail('不能选用其他实验室的笼位')
   if (cages.some((c) => c.status === 'disabled')) return fail('已停用的笼位不能排位')
-  if (cages.some((c) => c.status === 'cleaning')) return fail('待消杀中的笼位不可预分配')
 
   // 冲突排查（忽略自身以前可能存在的 reserve）
   const conflictOcc = data().occupancies.filter(
@@ -406,7 +405,7 @@ export function changeCages(input: CageChangeInput): OpResult {
       input.addCageIds.includes(c.id)
         ? { ...c, status: 'occupied' as const }
         : input.removeCageIds.includes(c.id)
-          ? { ...c, status: 'cleaning' as const }
+          ? { ...c, status: 'free' as const }
           : c,
     ),
     feedings: d.feedings.map((f) =>
@@ -474,7 +473,7 @@ export function exitFeeding(feedingId: string, exitAt: string, reason: string, t
       o.feedingId === feeding.id && o.end === null ? { ...o, end: exitAt, reason: `退出：${reason.trim()}` } : o,
     ),
     cages: d.cages.map((c) =>
-      released.includes(c.id) ? { ...c, status: toCleaning ? ('cleaning' as const) : ('free' as const) } : c,
+      released.includes(c.id) ? { ...c, status: 'free' as const } : c,
     ),
     feedings: d.feedings.map((f) =>
       f.id === feeding.id ? { ...f, status: 'exited' as const, exitAt, exitReason: reason.trim(), cageIds: [] } : f,

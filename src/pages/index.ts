@@ -6,7 +6,7 @@ import { mobilePage } from './mobile'
 import { loginPage } from './login'
 import { dashboardPage } from './dashboard'
 import { servicePage } from './service'
-import { orderPage } from './order'
+import { internalOrderPage, orderPage } from './order'
 import { stockPage } from './stock'
 import { purchasePage } from './purchase'
 import { supplierPage } from './supplier'
@@ -24,6 +24,7 @@ registerPage('/login', loginPage)
 registerPage('/dashboard', dashboardPage)
 registerPage('/service', servicePage)
 registerPage('/order', orderPage)
+registerPage('/order/internal', internalOrderPage)
 registerPage('/stock', stockPage)
 registerPage('/purchase', purchasePage)
 registerPage('/supplier', supplierPage)

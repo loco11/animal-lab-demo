@@ -34,7 +34,7 @@ import type {
   User,
 } from '../types'
 
-export const SEED_VERSION = 19
+export const SEED_VERSION = 21
 
 /** 演示基准日：种子数据围绕该日期编排，保证演示脚本可重复执行 */
 export const DEMO_TODAY = '2026-10-25'
@@ -56,6 +56,7 @@ export const ROUTE_OPTIONS: { path: string; title: string }[] = [
   { path: '/dashboard', title: '业务概览' },
   { path: '/service', title: '服务管理' },
   { path: '/order', title: '订单管理' },
+  { path: '/order/internal', title: '内部动物订购' },
   { path: '/stock', title: '库存管理' },
   { path: '/purchase', title: '外购汇总' },
   { path: '/supplier', title: '供应商管理' },
@@ -103,6 +104,7 @@ const SEED_MENUS: { id: string; parentId: string | null; title: string; type: Me
   { id: 'm_stock', parentId: 'm_g_stock', title: '库存管理', type: 'menu', path: '/stock', sort: 1 },
   { id: 'm_purchase', parentId: 'm_g_stock', title: '外购汇总', type: 'menu', path: '/purchase', sort: 2 },
   { id: 'm_supplier', parentId: 'm_g_stock', title: '供应商管理', type: 'menu', path: '/supplier', sort: 3 },
+  { id: 'm_order_internal', parentId: 'm_g_stock', title: '内部动物订购', type: 'menu', path: '/order/internal', sort: 4 },
 
   { id: 'm_g_animal', parentId: null, title: '饲养与空间', type: 'dir', sort: 4 },
   { id: 'm_cage_board', parentId: 'm_g_animal', title: '笼位空间看板', type: 'menu', path: '/cage/board', sort: 1 },
@@ -157,6 +159,7 @@ const ADMIN_MENUS = [
   'm_stock',
   'm_purchase',
   'm_supplier',
+  'm_order_internal',
   'm_g_animal',
   'm_cage_board',
   'm_feeding',
@@ -659,7 +662,7 @@ function cagesFor(labId: string, prefix: string): Cage[] {
     })
   }
 
-  // 贵安主楼 - 1F - 101室（SPF小鼠屏障室）- 02号IVC小鼠笼架 (A-108 设为消杀中，A-109/110 供预排位锁定)
+  // 贵安主楼 - 1F - 101室（SPF小鼠屏障室）- 02号IVC小鼠笼架 (A-109/110 供预排位锁定)
   for (let i = 7; i <= 12; i++) {
     list.push({
       id: `cg_${prefix}_a${i}`,
@@ -672,8 +675,7 @@ function cagesFor(labId: string, prefix: string): Cage[] {
       env: 'SPF',
       cageType: 'IVC小鼠笼',
       capacity: 5,
-      status: i === 8 ? 'cleaning' : 'free',
-      note: i === 8 ? '巡房合笼释放，终末臭氧+过氧化氢熏蒸消杀中' : undefined,
+      status: 'free',
     })
   }
 

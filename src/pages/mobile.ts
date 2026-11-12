@@ -22,17 +22,30 @@ const ICON_USER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 // 当前移动端全局状态（模块级持久化，在 notify/rerender 时保持用户所在视图）
 let currentView: 'home' | 'orders' | 'apply' = 'home'
 let currentApplyKind: OrderKind = 'internal'
-let orderFilter: 'all' | 'pending' | 'processing' | 'breeding' | 'completed' = 'all'
+let orderFilter: 'all' | 'processing' | 'completed' = 'all'
 const expandedOrderIds = new Set<string>()
+
+/** 订单生命周期业务终态判定：已完成 */
+export function isOrderCompleted(o: Order): boolean {
+  if (o.kind === 'internal') return o.fulfillStatus === 'completed'
+  if (o.kind === 'external') return o.fulfillStatus === 'sent'
+  if (o.kind === 'breeding') return o.fulfillStatus === 'exited'
+  return false
+}
+
+/** 订单生命周期业务状态判定：进行中（未到终态且未被退回） */
+export function isOrderProcessing(o: Order): boolean {
+  return !isOrderCompleted(o) && o.auditStatus !== 'rejected'
+}
 
 export function mobilePage(host: HTMLElement): void {
   const stage = el('div', 'mobile-view-stage')
 
   function render(): void {
     const orders = data().orders
-    const pendingCount = orders.filter((o) => o.auditStatus === 'pending').length
-    const processingCount = orders.filter((o) => o.fulfillStatus === 'pending_out' || o.fulfillStatus === 'sent').length
-    const breedingCount = orders.filter((o) => o.fulfillStatus === 'breeding').length
+    const totalCount = orders.length
+    const processingCount = orders.filter(isOrderProcessing).length
+    const completedCount = orders.filter(isOrderCompleted).length
 
     stage.innerHTML = `
       <div class="mobile-app-container">
@@ -51,7 +64,7 @@ export function mobilePage(host: HTMLElement): void {
             <div class="bottom-tab-item ${currentView === 'orders' ? 'is-active' : ''}" data-nav="orders">
               <span class="bottom-tab-icon">
                 ${ICON_ORDER}
-                ${pendingCount > 0 ? `<span class="tab-badge-num">${pendingCount}</span>` : ''}
+                ${processingCount > 0 ? `<span class="tab-badge-num">${processingCount}</span>` : ''}
               </span>
               <span>我的订单</span>
             </div>
@@ -76,7 +89,7 @@ export function mobilePage(host: HTMLElement): void {
 
     const bodySlot = stage.querySelector('#mobile-page-body') as HTMLElement
     if (currentView === 'home') {
-      renderHomePage(bodySlot, { total: orders.length, pending: pendingCount, processing: processingCount, breeding: breedingCount })
+      renderHomePage(bodySlot, { total: totalCount, processing: processingCount, completed: completedCount })
     } else if (currentView === 'orders') {
       renderOrdersPage(bodySlot)
     } else {
@@ -85,11 +98,11 @@ export function mobilePage(host: HTMLElement): void {
   }
 
   /* ==========================================================================
-     页面 1：【首页】（个人信息头 + 统计四宫格 + 极简服务卡片）
+     页面 1：【首页】（个人信息头 + 统计三大类 + 极简服务卡片）
      ========================================================================== */
   function renderHomePage(
     slot: HTMLElement,
-    stats: { total: number; pending: number; processing: number; breeding: number }
+    stats: { total: number; processing: number; completed: number }
   ): void {
     slot.innerHTML = `
       <!-- 头部学生个人信息 -->
@@ -114,23 +127,19 @@ export function mobilePage(host: HTMLElement): void {
 
       <!-- 首页内容主体 -->
       <main class="home-body">
-        <!-- 统计四宫格：一行四格，文字在上、数字在下 -->
-        <section class="stats-grid">
+        <!-- 统计三大类：全部订单、进行中、已完成 -->
+        <section class="stats-grid" style="grid-template-columns: repeat(3, 1fr);">
           <div class="stat-card" data-jump="all">
-            <span class="stat-card__label">我的订单</span>
+            <span class="stat-card__label">全部订单</span>
             <span class="stat-card__num">${stats.total}</span>
-          </div>
-          <div class="stat-card" data-jump="pending">
-            <span class="stat-card__label">审核中</span>
-            <span class="stat-card__num">${stats.pending}</span>
           </div>
           <div class="stat-card" data-jump="processing">
             <span class="stat-card__label">进行中</span>
-            <span class="stat-card__num">${stats.processing}</span>
+            <span class="stat-card__num" style="color:#d97706;">${stats.processing}</span>
           </div>
-          <div class="stat-card" data-jump="breeding">
-            <span class="stat-card__label">在养中</span>
-            <span class="stat-card__num">${stats.breeding}</span>
+          <div class="stat-card" data-jump="completed">
+            <span class="stat-card__label">已完成</span>
+            <span class="stat-card__num" style="color:#059669;">${stats.completed}</span>
           </div>
         </section>
 
@@ -810,23 +819,12 @@ export function mobilePage(host: HTMLElement): void {
      ========================================================================== */
   function renderOrdersPage(slot: HTMLElement): void {
     const allOrders = data().orders.slice().reverse()
+    const processingOrders = allOrders.filter(isOrderProcessing)
+    const completedOrders = allOrders.filter(isOrderCompleted)
 
     const filteredOrders = allOrders.filter((o) => {
-      if (orderFilter === 'pending') return o.auditStatus === 'pending'
-      if (orderFilter === 'processing') {
-        return (
-          o.fulfillStatus === 'pending_out' ||
-          (o.kind === 'external' && (o.fulfillStatus === 'pending_collect' || o.fulfillStatus === 'pending_send'))
-        )
-      }
-      if (orderFilter === 'breeding') return o.fulfillStatus === 'breeding'
-      if (orderFilter === 'completed') {
-        return (
-          o.fulfillStatus === 'completed' ||
-          o.fulfillStatus === 'exited' ||
-          (o.kind === 'external' && o.fulfillStatus === 'sent')
-        )
-      }
+      if (orderFilter === 'processing') return isOrderProcessing(o)
+      if (orderFilter === 'completed') return isOrderCompleted(o)
       return true
     })
 
@@ -837,13 +835,11 @@ export function mobilePage(host: HTMLElement): void {
           <span style="font-size:12px;color:#2563eb;cursor:pointer;font-weight:600;" id="orders-refresh-btn">刷新 ↻</span>
         </div>
 
-        <!-- 订单状态过滤条 -->
+        <!-- 订单状态过滤条：三大核心分类 -->
         <div class="orders-filter-bar">
           <div class="orders-filter-chip ${orderFilter === 'all' ? 'is-active' : ''}" data-filter="all">全部 (${allOrders.length})</div>
-          <div class="orders-filter-chip ${orderFilter === 'pending' ? 'is-active' : ''}" data-filter="pending">审核中</div>
-          <div class="orders-filter-chip ${orderFilter === 'processing' ? 'is-active' : ''}" data-filter="processing">进行中</div>
-          <div class="orders-filter-chip ${orderFilter === 'breeding' ? 'is-active' : ''}" data-filter="breeding">在养中</div>
-          <div class="orders-filter-chip ${orderFilter === 'completed' ? 'is-active' : ''}" data-filter="completed">已办结</div>
+          <div class="orders-filter-chip ${orderFilter === 'processing' ? 'is-active' : ''}" data-filter="processing">进行中 (${processingOrders.length})</div>
+          <div class="orders-filter-chip ${orderFilter === 'completed' ? 'is-active' : ''}" data-filter="completed">已完成 (${completedOrders.length})</div>
         </div>
 
         <!-- 订单卡片列表 -->

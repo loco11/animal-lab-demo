@@ -45,7 +45,6 @@ export const cagePage: PageDef = {
         { key: 'free', text: '🟢 空闲可用', count: cages.filter((c) => c.status === 'free').length },
         { key: 'reserved', text: '🟡 预分配锁定', count: cages.filter((c) => c.status === 'reserved').length },
         { key: 'occupied', text: '🟣 在养使用', count: cages.filter((c) => c.status === 'occupied').length },
-        { key: 'cleaning', text: '🧼 待消杀', count: cages.filter((c) => c.status === 'cleaning').length },
         { key: 'disabled', text: '⚪ 维护停用', count: cages.filter((c) => c.status === 'disabled').length },
       ],
       view.tab,
@@ -110,7 +109,6 @@ export const cagePage: PageDef = {
     const occCount = filtered.filter((c) => c.status === 'occupied').length
 
     const resCount = filtered.filter((c) => c.status === 'reserved').length
-    const cleanCount = filtered.filter((c) => c.status === 'cleaning').length
 
     toolbar.innerHTML = `
       <div style="font-size:12px;color:var(--c-desc);display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
@@ -118,7 +116,6 @@ export const cagePage: PageDef = {
         <span style="color:var(--c-success);">🟢 空闲: <strong>${freeCount}</strong></span>
         <span style="color:#d97706;">🟡 预分配: <strong>${resCount}</strong></span>
         <span style="color:#0284c7;">🟣 在养: <strong>${occCount}</strong></span>
-        <span style="color:#0ea5e9;">🧼 待消杀: <strong>${cleanCount}</strong></span>
       </div>
       <div class="toolbar__actions">
         <button class="btn btn-primary" data-act="create">新增笼位</button>
@@ -169,7 +166,6 @@ export const cagePage: PageDef = {
             render: (r) => {
               if (r.status === 'occupied') return tagHtml('在养使用', 'primary')
               if (r.status === 'reserved') return tagHtml('预分配锁定', 'warning')
-              if (r.status === 'cleaning') return tagHtml('待消杀', 'primary')
               if (r.status === 'free') return tagHtml('空闲可用', 'success')
               return tagHtml('维护停用', 'default')
             },
@@ -186,7 +182,6 @@ export const cagePage: PageDef = {
           [
             { text: '🎯 看板定位', act: 'locate' },
             { text: '占用历史', act: 'history' },
-            row.status === 'cleaning' ? { text: '完成消杀', act: 'clean' } : null,
             row.status === 'disabled' ? { text: '启用', act: 'enable' } : null,
             row.status !== 'occupied' && row.status !== 'disabled' ? { text: '停用', act: 'disable', danger: true } : null,
           ].filter(Boolean) as RowAction[],
@@ -199,10 +194,6 @@ export const cagePage: PageDef = {
             navigate(`/cage/board?focusCage=${encodeURIComponent(row.code)}`)
           }
           if (act === 'history') openHistory(row)
-          if (act === 'clean') runGuarded('cage:edit', () => {
-            showResult(completeCageCleaning(row.id))
-            rerender()
-          })
           if (act === 'enable') runGuarded('cage:edit', () => showResult(setCageStatus(row.id, 'free')))
           if (act === 'disable') runGuarded('cage:edit', () => showResult(setCageStatus(row.id, 'disabled')))
         },
@@ -225,9 +216,6 @@ function filterRows(): Cage[] {
 
 function currentUsageDetail(cageId: string): string {
   const cage = data().cages.find((c) => c.id === cageId)
-  if (cage?.status === 'cleaning') {
-    return '<span style="color:#0284c7;font-size:12px;font-weight:500;">🧼 屏障合笼/退出，熏蒸消杀中</span>'
-  }
   if (cage?.status === 'reserved') {
     const resOcc = data().occupancies.find((o) => o.cageId === cageId && o.type === 'reserve')
     const resOrder = resOcc ? data().orders.find((o) => o.id === resOcc.orderId) : undefined

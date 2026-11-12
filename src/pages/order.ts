@@ -18,7 +18,7 @@ import { data, scoped } from '../core/data'
 import { downloadCSV, moneyText, parseYuan, todayStr } from '../core/utils'
 import type { Order, OrderKind } from '../types'
 import type { PageDef } from '../router'
-import { currentPath, currentQuery, navigate, rerender } from '../router'
+import { currentPath, currentQuery, navigate, rerender, routePath } from '../router'
 import { el, openDialog, renderPager, renderTable, renderTabs, tagHtml, toast, type RowAction } from '../ui'
 import { detailGrid, formDialog, historyTable, pageShell } from '../ui/form'
 import { buildQuery, runGuarded, showResult, type QueryField } from './common'
@@ -43,8 +43,9 @@ function syncFromRoute(): void {
   if (routeKey === currentPath()) return
   routeKey = currentPath()
   const q = currentQuery()
-  view.filters = { code: '', applicant: '', audit: q.audit ?? '', fulfill: q.fulfill ?? '', source: '', sent: '' }
-  view.tab = (q.kind as TabKey) || 'all'
+  const isInternalPage = routePath() === '/order/internal'
+  view.filters = { code: '', applicant: '', audit: q.audit ?? '', fulfill: q.fulfill ?? (isInternalPage ? 'pending_out' : ''), source: '', sent: '' }
+  view.tab = isInternalPage ? 'internal' : (q.kind as TabKey) || 'all'
   view.page = 1
 }
 
@@ -52,25 +53,29 @@ export const orderPage: PageDef = {
   title: '订单管理',
   render(host: HTMLElement) {
     syncFromRoute()
+    const isInternalPage = routePath() === '/order/internal'
     const page = pageShell(host, {
     })
 
-    const all = allOrders()
-    renderTabs(
-      page,
-      [
-        { key: 'all', text: '全部订单', count: all.length },
-        { key: 'internal', text: KIND_TEXT.internal, count: all.filter((o) => o.kind === 'internal').length },
-        { key: 'external', text: KIND_TEXT.external, count: all.filter((o) => o.kind === 'external').length },
-        { key: 'breeding', text: KIND_TEXT.breeding, count: all.filter((o) => o.kind === 'breeding').length },
-      ],
-      view.tab,
-      (key) => {
-        view.tab = key as TabKey
-        view.page = 1
-        rerender()
-      },
-    )
+    // 独立「内部动物订购」页不渲染类型页签，页面身份由左侧菜单体现
+    if (!isInternalPage) {
+      const all = allOrders()
+      renderTabs(
+        page,
+        [
+          { key: 'all', text: '全部订单', count: all.length },
+          { key: 'internal', text: KIND_TEXT.internal, count: all.filter((o) => o.kind === 'internal').length },
+          { key: 'external', text: KIND_TEXT.external, count: all.filter((o) => o.kind === 'external').length },
+          { key: 'breeding', text: KIND_TEXT.breeding, count: all.filter((o) => o.kind === 'breeding').length },
+        ],
+        view.tab,
+        (key) => {
+          view.tab = key as TabKey
+          view.page = 1
+          rerender()
+        },
+      )
+    }
 
     const queryFields: QueryField[] = [
       { key: 'code', label: '订单编号', type: 'text' },
@@ -96,6 +101,17 @@ export const orderPage: PageDef = {
         ],
       },
     ]
+    if (view.tab === 'internal') {
+      queryFields.push({
+        key: 'fulfill',
+        label: '履约',
+        type: 'select',
+        options: [
+          { value: 'pending_out', label: FULFILL_TEXT.pending_out },
+          { value: 'completed', label: FULFILL_TEXT.completed },
+        ],
+      })
+    }
     if (view.tab === 'external') {
       queryFields.push({
         key: 'sent',
@@ -116,7 +132,7 @@ export const orderPage: PageDef = {
         rerender()
       },
       () => {
-        view.filters = { code: '', applicant: '', audit: '', fulfill: '', source: '', sent: '' }
+        view.filters = { code: '', applicant: '', audit: '', fulfill: isInternalPage ? 'pending_out' : '', source: '', sent: '' }
         view.page = 1
         rerender()
       },
@@ -126,7 +142,7 @@ export const orderPage: PageDef = {
     const toolbar = el('div', 'toolbar')
     toolbar.innerHTML =
       '<div class="toolbar__actions"><button class="btn btn-primary" data-act="agent">代录外部客户订单</button>' +
-      '<button class="btn btn-default" data-act="mobile" style="color:#16529b;border-color:#cbd5e1;background:#f0f5fb;font-weight:600">移动办事端 (企业微信)</button>' +
+      '<button class="btn btn-default" data-act="mobile" style="color:#16529b;border-color:#cbd5e1;background:#f0f5fb;font-weight:600;display:none">移动办事端 (企业微信)</button>' +
       '<button class="btn btn-default" data-act="export">导出当前列表</button></div>' +
       '<span class="hint" style="color:#059669;font-weight:600;">💡 窗口线下核销快捷通道：学生报姓名（如“张立”）或单号，在上方检索后点击【出库交付】，一步完成库存核减、交接归档与扣款。</span>'
     toolbar.querySelector('button[data-act="agent"]')?.addEventListener('click', () => {
@@ -160,7 +176,7 @@ export const orderPage: PageDef = {
           o.createdAt,
         ]
       })
-      const name = view.tab === 'external' ? '外购订单清单' : '订单清单'
+      const name = isInternalPage ? '内部动物订购清单' : view.tab === 'external' ? '外购订单清单' : '订单清单'
       downloadCSV(
         `${name}_${todayStr()}.csv`,
         ['订单编号', '类型', '品目', '规格', '数量', '单位', '申请人', '申请单位', '供应商', '审核状态', '发送/履约状态', '单价（元）', '金额（元）', '提交日期'],
@@ -233,6 +249,12 @@ export const orderPage: PageDef = {
   },
 }
 
+/** 内部动物订购：从订单管理拆分出的独立菜单页（复用订单列表，锁定 internal 类型，不含代录入口） */
+export const internalOrderPage: PageDef = {
+  title: '内部动物订购',
+  render: (host: HTMLElement) => orderPage.render(host),
+}
+
 /* ---------------- 数据 ---------------- */
 
 function allOrders(): Order[] {
@@ -266,7 +288,7 @@ function rowActions(row: Order): RowAction[] {
     if (auditPassed(row.auditStatus)) {
       list.push({ text: '出库交付', act: 'ship' })
     } else {
-      list.push({ text: '核验出库交付', act: 'approve_and_ship' })
+      list.push({ text: '出库交付', act: 'approve_and_ship' })
       list.push({ text: '退回', act: 'reject', danger: true })
     }
     return list

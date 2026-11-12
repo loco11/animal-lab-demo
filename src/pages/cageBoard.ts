@@ -2,7 +2,6 @@
 
 import { data, scoped } from '../core/data'
 import { daysBetween, escapeHtml, todayStr } from '../core/utils'
-import { completeCageCleaning } from '../core/biz/feeding'
 import type { Cage, CageOccupancy, Feeding, Order } from '../types'
 import type { PageDef } from '../router'
 import { currentQuery, navigate, rerender } from '../router'
@@ -15,7 +14,7 @@ interface ViewState {
   building: string
   floor: string
   room: string
-  status: 'all' | 'free' | 'reserved' | 'occupied' | 'cleaning' | 'disabled'
+  status: 'all' | 'free' | 'reserved' | 'occupied' | 'disabled'
   searchKeyword: string
 }
 
@@ -225,7 +224,6 @@ export const cageBoardPage: PageDef = {
             <button class="btn ${view.status === 'free' ? 'btn-primary' : 'btn-default'}" data-status="free" style="height:26px;padding:0 10px;font-size:12px;color:var(--c-success);">🟢 空闲 (${filteredByFloor.filter((c) => c.status === 'free').length})</button>
             <button class="btn ${view.status === 'reserved' ? 'btn-primary' : 'btn-default'}" data-status="reserved" style="height:26px;padding:0 10px;font-size:12px;color:#d97706;">🟡 预分配 (${filteredByFloor.filter((c) => c.status === 'reserved').length})</button>
             <button class="btn ${view.status === 'occupied' ? 'btn-primary' : 'btn-default'}" data-status="occupied" style="height:26px;padding:0 10px;font-size:12px;color:#0284c7;">🟣 在养 (${filteredByFloor.filter((c) => c.status === 'occupied').length})</button>
-            <button class="btn ${view.status === 'cleaning' ? 'btn-primary' : 'btn-default'}" data-status="cleaning" style="height:26px;padding:0 10px;font-size:12px;color:#0ea5e9;">🧼 待消杀 (${filteredByFloor.filter((c) => c.status === 'cleaning').length})</button>
             <button class="btn ${view.status === 'disabled' ? 'btn-primary' : 'btn-default'}" data-status="disabled" style="height:26px;padding:0 10px;font-size:12px;color:var(--c-desc);">⚪ 停用 (${filteredByFloor.filter((c) => c.status === 'disabled').length})</button>
           </div>
         </div>
@@ -367,7 +365,6 @@ function renderCageCard(cage: Cage, isFocused = false, searchKeyword = ''): HTML
   const isFree = cage.status === 'free'
   const isOccupied = cage.status === 'occupied'
   const isReserved = cage.status === 'reserved'
-  const isCleaning = cage.status === 'cleaning'
 
   const occ = isOccupied ? data().occupancies.find((o) => o.cageId === cage.id && o.end === null) : undefined
   const feeding = occ ? data().feedings.find((f) => f.id === occ.feedingId) : undefined
@@ -395,9 +392,7 @@ function renderCageCard(cage: Cage, isFocused = false, searchKeyword = ''): HTML
         ? '1px solid #bae6fd'
         : isReserved
           ? '1px solid #fde047'
-          : isCleaning
-            ? '1px solid #bae6fd'
-            : '1px solid #e2e8f0'
+          : '1px solid #e2e8f0'
 
   const cardBg = isFree
     ? '#ffffff'
@@ -405,9 +400,7 @@ function renderCageCard(cage: Cage, isFocused = false, searchKeyword = ''): HTML
       ? '#f0f9ff'
       : isReserved
         ? '#fefce8'
-        : isCleaning
-          ? '#f8fafc'
-          : '#f8fafc'
+        : '#f8fafc'
 
   const card = el('div', `cage-slot-card status-${cage.status} ${isFocused ? 'is-focused' : ''}`)
   card.style.cssText = `
@@ -505,25 +498,6 @@ function renderCageCard(cage: Cage, isFocused = false, searchKeyword = ''): HTML
         <span style="font-weight:600;">办理入住 ›</span>
       </div>
     `
-  } else if (isCleaning) {
-    contentHtml = `
-      <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-          <strong style="font-size:14px;color:#0284c7;font-family:monospace;">${escapeHtml(cage.code)}</strong>
-          <span style="font-size:11px;background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;padding:1px 6px;border-radius:3px;font-weight:600;">待消杀</span>
-        </div>
-        <div style="font-size:12px;color:#0369a1;font-weight:600;margin-bottom:2px;">
-          合笼 / 退出释放
-        </div>
-        <div style="font-size:11px;color:#64748b;">
-          紫外臭氧熏蒸中
-        </div>
-      </div>
-      <div style="font-size:11px;color:#0284c7;margin-top:8px;display:flex;justify-content:space-between;border-top:1px dashed #bae6fd;padding-top:4px;">
-        <span>待恢复空闲</span>
-        <span style="font-weight:600;">完成消杀 ›</span>
-      </div>
-    `
   } else {
     // disabled
     contentHtml = `
@@ -566,7 +540,6 @@ function openCageDetailModal(
 ): void {
   const isOccupied = cage.status === 'occupied'
   const isReserved = cage.status === 'reserved'
-  const isCleaning = cage.status === 'cleaning'
   const isFree = cage.status === 'free'
   const isDisabled = cage.status === 'disabled'
 
@@ -585,11 +558,9 @@ function openCageDetailModal(
         ? tagHtml('在养使用', 'primary')
         : isReserved
           ? tagHtml('预分配锁定', 'warning')
-          : isCleaning
-            ? tagHtml('待消杀', 'primary')
-            : isFree
-              ? tagHtml('空闲可用', 'success')
-              : tagHtml('维护停用', 'default'),
+          : isFree
+            ? tagHtml('空闲可用', 'success')
+            : tagHtml('维护停用', 'default'),
     ],
   ]
 
@@ -609,9 +580,6 @@ function openCageDetailModal(
     items.push(['2天保留截止时间', `<strong style="color:#d97706;">${resOrder?.reserveExpireAt || '—'} 23:59</strong>`])
     items.push(['保留风控说明', '自拟入场日起超期 2 天未办理入住，系统将自动释放'])
     items.push(['关联申请单', `<code>${resOrder?.code || '—'}</code>`])
-  } else if (isCleaning) {
-    items.push(['消杀原因', '合笼或退场释放，屏障物理消杀中'])
-    items.push(['消杀要求', '紫外+臭氧熏蒸 24 小时'])
   } else if (isDisabled) {
     items.push(['停用原因/说明', cage.note || '设备例行维护与消毒'])
   }
@@ -633,15 +601,6 @@ function openCageDetailModal(
       primary: true,
       onClick: () => {
         navigate('/feeding')
-      },
-    })
-  } else if (isCleaning) {
-    actions.push({
-      text: '🧼 完成消杀并恢复空闲',
-      primary: true,
-      onClick: () => {
-        showResult(completeCageCleaning(cage.id))
-        rerender()
       },
     })
   } else if (isFree) {
@@ -673,7 +632,7 @@ function openCageDetailModal(
   actions.push({ text: '关闭', onClick: () => {} })
 
   const dlg = openDialog({
-    title: `笼位空间档案：${cage.code}（${isOccupied ? '在养占用' : isReserved ? '预分配锁定' : isCleaning ? '待消杀' : isFree ? '空闲可用' : '维护停用'}）`,
+    title: `笼位空间档案：${cage.code}（${isOccupied ? '在养占用' : isReserved ? '预分配锁定' : isFree ? '空闲可用' : '维护停用'}）`,
     bodyHtml: '',
     wide: true,
     actions,
