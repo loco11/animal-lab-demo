@@ -13,7 +13,7 @@ import { getState } from '../core/store'
 import { data } from '../core/data'
 import { approveOrder, listOrders, shipOrder } from '../core/biz/orders'
 import { adjustStock, batchStockCheck, createStockItem, importStockItems, stockIn, stockLoss } from '../core/biz/stock'
-import { createBatch, createSupplier, createSupplierItem, markOrdersSent, markSent, registerAnomaly, toggleSupplier, toggleSupplierItem, updateAnomalyStatus, updateSupplier, updateSupplierItem } from '../core/biz/purchase'
+import { createSupplier, createSupplierItem, markOrdersSent, registerAnomaly, toggleSupplier, toggleSupplierItem, updateAnomalyStatus, updateSupplier, updateSupplierItem } from '../core/biz/purchase'
 import {
   allocateCages,
   checkAndReleaseExpiredReservations,
@@ -333,23 +333,27 @@ describe('入库登记与批量导入', () => {
 })
 
 describe('T18 / T19 / T20 外购汇总、发送与异常', () => {
-  it('汇总后标记已发送，订单状态更新但不产生库存变化', () => {
+  it('生成跨供应商发送批次后订单标记已发送，不产生库存变化且不可重复', () => {
     const before = data().stockItems.reduce((sum, s) => sum + s.quantity, 0)
-    expect(approveOrder('or_ani_e1').ok).toBe(true)
 
-    const batch = createBatch('su_ani_1', ['or_ani_e1', 'or_ani_e2'])
-    expect(batch.ok).toBe(true)
-    expect(order('or_ani_e1').fulfillStatus).toBe('pending_send')
-
-    expect(markSent(batch.id!).ok).toBe(true)
-    expect(order('or_ani_e1').fulfillStatus).toBe('sent')
+    const res = markOrdersSent(['or_ani_e2', 'or_ani_e9', 'or_ani_e7'])
+    expect(res.ok).toBe(true)
     expect(order('or_ani_e2').fulfillStatus).toBe('sent')
+    expect(order('or_ani_e9').fulfillStatus).toBe('sent')
+    expect(order('or_ani_e7').fulfillStatus).toBe('sent')
+
+    // 生成一条已发送批次，覆盖 3 家供应商
+    const batch = data().purchaseBatches.find((b) => b.id === res.id)!
+    expect(batch).toBeTruthy()
+    expect(batch.status).toBe('sent')
+    expect(batch.orderIds.length).toBe(3)
+    expect(batch.supplierIds.length).toBe(3)
 
     const after = data().stockItems.reduce((sum, s) => sum + s.quantity, 0)
     expect(after).toBe(before)
 
-    // T18 防止重复发送
-    expect(markSent(batch.id!).ok).toBe(false)
+    // 防止重复发送
+    expect(markOrdersSent(['or_ani_e2']).ok).toBe(false)
   })
 
   it('新增供应商可带多个供应条目，编码自动生成且唯一（名称可重复）', () => {
@@ -399,17 +403,21 @@ describe('T18 / T19 / T20 外购汇总、发送与异常', () => {
     expect(createSupplier({ name: '测试', contact: '', phone: '' }).ok).toBe(false)
   })
 
-  it('外购订单可按订单标记已处理（发送供应商），不可重复处理', () => {
+  it('外购订单可按订单标记已处理（发送供应商），单笔也生成批次且不可重复', () => {
     expect(approveOrder('or_ani_e1').ok).toBe(true)
-    expect(markOrdersSent(['or_ani_e1']).ok).toBe(true)
+    const res = markOrdersSent(['or_ani_e1'])
+    expect(res.ok).toBe(true)
     expect(order('or_ani_e1').fulfillStatus).toBe('sent')
+    const batch = data().purchaseBatches.find((b) => b.id === res.id)!
+    expect(batch.orderIds).toEqual(['or_ani_e1'])
     expect(markOrdersSent(['or_ani_e1']).ok).toBe(false)
   })
 
-  it('汇总只允许同一供应商的订单（未关联供应商的不参与）', () => {
-    expect(approveOrder('or_ani_e1').ok).toBe(true)
-    expect(createBatch('su_ani_2', ['or_ani_e1']).ok).toBe(false)
-    expect(createBatch('su_ani_1', ['or_ani_e1']).ok).toBe(true)
+  it('一个发送批次可跨多个供应商', () => {
+    const res = markOrdersSent(['or_ani_e2', 'or_ani_e9'])
+    expect(res.ok).toBe(true)
+    const batch = data().purchaseBatches.find((b) => b.id === res.id)!
+    expect(batch.supplierIds.length).toBe(2)
   })
 
   it('T20 异常关联原订单，不改变交付状态与金额', () => {

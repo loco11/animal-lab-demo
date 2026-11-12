@@ -16,20 +16,21 @@ import {
 } from '../core/biz/feeding'
 import { listOrders, rejectOrder } from '../core/biz/orders'
 import { categoryDef, categoryText } from '../core/biz/stock'
-import { auditPassed } from '../core/labels'
+import { AUDIT_STATUS_TEXT, auditPassed, auditTone, FULFILL_TEXT, fulfillTone, KIND_TEXT } from '../core/labels'
 import { data, scoped } from '../core/data'
-import { addDays, daysBetween, escapeHtml, moneyText, todayStr } from '../core/utils'
+import { addDays, daysBetween, downloadCSV, escapeHtml, moneyText, todayStr } from '../core/utils'
 import type { Feeding, Order } from '../types'
 import type { PageDef } from '../router'
 import { currentPath, currentQuery, navigate, rerender } from '../router'
 import { el, openDialog, renderTable, renderTabs, tagHtml, toast, type RowAction } from '../ui'
 import { detailGrid, formDialog, pageShell } from '../ui/form'
 import { buildQuery, runGuarded, showResult } from './common'
+import { openAgentExternalOrder } from './order'
 
-type TabKey = 'incoming' | 'breeding' | 'exited'
+type TabKey = 'all' | 'incoming' | 'breeding' | 'exited'
 
 const view = {
-  tab: (currentQuery().status as TabKey) || 'breeding',
+  tab: (currentQuery().status as TabKey) || 'all',
   filters: {} as Record<string, string>,
 }
 
@@ -40,7 +41,7 @@ function syncFromRoute(): void {
   if (routeKey === currentPath()) return
   routeKey = currentPath()
   const q = currentQuery()
-  view.tab = (q.status as TabKey) || 'breeding'
+  view.tab = (q.status as TabKey) || 'all'
   view.filters = {}
 }
 
@@ -55,6 +56,7 @@ export const feedingPage: PageDef = {
     const incoming = listOrders().filter((o) => o.kind === 'breeding' && o.fulfillStatus === 'incoming')
     const breeding = listFeedings().filter((f) => f.status === 'breeding')
     const exited = listFeedings().filter((f) => f.status === 'exited')
+    const allBreeding = listOrders().filter((o) => o.kind === 'breeding')
 
     renderTabs(
       page,
@@ -62,6 +64,7 @@ export const feedingPage: PageDef = {
         { key: 'incoming', text: '待入场', count: incoming.length },
         { key: 'breeding', text: '在养', count: breeding.length },
         { key: 'exited', text: '已退出', count: exited.length },
+        { key: 'all', text: '全部饲养寄养订单', count: allBreeding.length },
       ],
       view.tab,
       (key) => {
@@ -88,7 +91,8 @@ export const feedingPage: PageDef = {
     page.appendChild(query.node)
 
     const tableHost = el('div', 'panel panel-table')
-    if (view.tab === 'incoming') renderIncoming(tableHost)
+    if (view.tab === 'all') renderAllBreeding(tableHost)
+    else if (view.tab === 'incoming') renderIncoming(tableHost)
     else renderFeedingTable(tableHost, view.tab === 'breeding' ? breedingRows() : exitedRows())
     page.appendChild(tableHost)
   },
@@ -112,15 +116,89 @@ function exitedRows(): Feeding[] {
   return list
 }
 
-function renderIncoming(host: HTMLElement): void {
-  const rows = listOrders().filter((o) => o.kind === 'breeding' && o.fulfillStatus === 'incoming')
+function allBreedingRows(): Order[] {
+  let list = listOrders().filter((o) => o.kind === 'breeding')
+  const { keyword, animal } = view.filters
+  if (keyword) list = list.filter((o) => o.code.includes(keyword) || o.applicantName.includes(keyword))
+  if (animal) list = list.filter((o) => o.itemName.includes(animal) || o.spec.includes(animal))
+  return list
+}
 
+function renderAllBreeding(host: HTMLElement): void {
+  const rows = allBreedingRows()
+
+  const toolbar = el('div', 'toolbar')
+  toolbar.innerHTML =
+    '<div class="toolbar__actions">' +
+    '<button class="btn btn-primary" data-act="agent-external">代录入外部订单</button>' +
+    '<button class="btn btn-default" data-act="export">导出数据</button>' +
+    '</div>' +
+    `<span class="hint">全部饲养寄养：共 <strong>${rows.length}</strong> 笔，覆盖待入场、在养、已退出全流程</span>`
+  toolbar.querySelector('button[data-act="agent-external"]')?.addEventListener('click', () => {
+    runGuarded('order:create', () => openAgentExternalOrder())
+  })
+  toolbar.querySelector('button[data-act="export"]')?.addEventListener('click', () => {
+    if (!rows.length) {
+      toast('当前列表没有可导出的数据', 'error')
+      return
+    }
+    const csvRows = rows.map((o) => [
+      o.code,
+      o.itemName,
+      o.spec,
+      String(o.quantity),
+      o.unit,
+      String(o.animalCount ?? ''),
+      String(o.feedDays ?? ''),
+      o.expectStartDate ?? '',
+      o.expectEndDate ?? '',
+      o.applicantName,
+      o.applicantOrg,
+      AUDIT_STATUS_TEXT[o.auditStatus],
+      FULFILL_TEXT[o.fulfillStatus],
+      o.createdAt,
+    ])
+    downloadCSV(
+      `饲养寄养订单_${todayStr()}.csv`,
+      ['订单编号', '服务 / 品目', '规格', '数量', '单位', '拟养只数', '拟养天数', '拟入场日期', '拟退场日期', '申请人', '申请单位', '审核状态', '当前阶段', '提交日期'],
+      csvRows,
+    )
+    toast(`已导出 ${rows.length} 条`, 'success')
+  })
+  host.appendChild(toolbar)
+
+  renderTable<Order>(
+    host,
+    {
+      cols: [
+        { key: 'code', title: '订单编号', width: '130px' },
+        { key: 'name', title: '姓名', width: '110px', render: (r) => r.applicantName },
+        { key: 'no', title: '学工号', width: '120px', render: (r) => r.applicantNo || '—' },
+        { key: 'org', title: '单位名称', ellipsis: true, render: (r) => r.applicantOrg || '—' },
+        { key: 'item', title: '服务 / 规格', render: (r) => `${escapeHtml(r.itemName)}｜${escapeHtml(r.spec)}` },
+        { key: 'audit', title: '审核', width: '90px', render: (r) => tagHtml(AUDIT_STATUS_TEXT[r.auditStatus], auditTone(r.auditStatus)) },
+        { key: 'fulfill', title: '当前阶段', width: '100px', render: (r) => tagHtml(FULFILL_TEXT[r.fulfillStatus], fulfillTone(r.fulfillStatus)) },
+        { key: 'createdAt', title: '提交日期', width: '110px' },
+      ],
+      rows,
+      actions: (row) => [{ text: '详情', act: 'detail' }],
+      queryActive: Object.values(view.filters).some(Boolean),
+      emptyText: '暂无饲养寄养订单',
+    },
+    {
+      onAction: (act, row) => {
+        if (act === 'detail') openOrderDetail(row)
+      },
+    },
+  )
+}
+
+function renderIncoming(host: HTMLElement): void {
   // 规范工具栏：与 Attachment 2 保持一致
   const toolbar = el('div', 'toolbar')
   toolbar.innerHTML = `
-    <div class="toolbar__actions" style="display:flex;justify-content:space-between;width:100%;align-items:center;">
-      <span class="hint">待入场清单：当前共 <strong>${rows.length}</strong> 笔饲养订单待审核排位及现场办理入住（审核同意后自动预留锁定 2 天，逾期未办理自动释放重排）</span>
-      <button class="btn btn-default" id="btn-refresh-expire" style="font-size:11.5px;padding:3px 10px;height:28px;">🔄 检查逾期保留释放</button>
+    <div class="toolbar__actions" style="display:flex;justify-content:flex-end;width:100%;align-items:center;">
+      <button class="btn btn-default" id="btn-refresh-expire">🔄 检查逾期保留释放</button>
     </div>
   `
   host.appendChild(toolbar)
@@ -134,30 +212,34 @@ function renderIncoming(host: HTMLElement): void {
     }
   })
 
+  renderIncomingTable(host)
+}
+
+/** 待入场订单列表（可在任意容器内复用，如笼位看板弹窗） */
+export function renderIncomingTable(host: HTMLElement, preselectCageId?: string, onChanged?: () => void): void {
+  const rows = listOrders().filter((o) => o.kind === 'breeding' && o.fulfillStatus === 'incoming')
+
   renderTable<Order>(
     host,
     {
       cols: [
         { key: 'code', title: '订单编号', width: '130px' },
-        { key: 'item', title: '服务 / 规格', render: (r) => `${r.itemName}｜${r.spec}` },
+        { key: 'name', title: '姓名', width: '110px', render: (r) => r.applicantName },
+        { key: 'no', title: '学工号', width: '120px', render: (r) => r.applicantNo || '—' },
+        { key: 'org', title: '单位名称', ellipsis: true, render: (r) => r.applicantOrg || '—' },
         {
           key: 'schedule',
-          title: '拟入住区间 & 规模',
+          title: '饲养需求',
           width: '180px',
           render: (r) => {
-            const range = r.expectStartDate
-              ? `<strong>${r.expectStartDate}</strong> 至 <strong>${r.expectEndDate || '—'}</strong><br><span style="font-size:11px;color:#0284c7;">拟养 ${r.feedDays || 14} 天</span>`
-              : `<span style="color:#64748b;">拟养 ${r.feedDays || 14} 天</span>`
-            const cageTypeLabel = r.cageType ? ` · <span style="color:#475569;">${escapeHtml(r.cageType)}</span>` : ''
-            return `${range}<br><span style="font-size:11px;color:#334155;">预订 <strong>${r.quantity} 笼</strong>（${r.animalCount || 20} 只${cageTypeLabel}）</span>`
+            const parts = [
+              `预订 <strong>${r.quantity}</strong> 笼`,
+              r.animalCount ? `<strong>${r.animalCount}</strong> 只` : '',
+              r.feedDays ? `养 <strong>${r.feedDays}</strong> 天` : '',
+              r.cageType ? escapeHtml(r.cageType) : '',
+            ].filter(Boolean)
+            return `<span style="color:#334155;">${parts.join(' · ')}</span>`
           },
-        },
-        {
-          key: 'applicant',
-          title: '申请人 / 课题组',
-          width: '160px',
-          render: (r) =>
-            `👤 ${escapeHtml(r.applicantName)}<br><span style="font-size:11px;color:#64748b;">${escapeHtml(r.applicantOrg || '')}</span>`,
         },
         {
           key: 'feeStatus',
@@ -172,7 +254,7 @@ function renderIncoming(host: HTMLElement): void {
           width: '170px',
           render: (r) => {
             if (r.reserveStatus === 'expired_released') {
-              return tagHtml('逾期释放·待重排', 'danger') + '<br><span style="font-size:10.5px;color:#ef4444;">已超期2天自动释放</span>'
+              return tagHtml('逾期释放·待重排', 'danger')
             }
             if (auditPassed(r.auditStatus)) {
               const cageCodes = r.allocatedCageIds?.length
@@ -186,16 +268,17 @@ function renderIncoming(host: HTMLElement): void {
                 `<br><span style="font-size:10px;color:#854d0e;">保留至: ${r.reserveExpireAt || '—'}</span>`
               )
             }
-            return tagHtml('待排位审核', 'warning') + '<br><span style="font-size:10.5px;color:#64748b;">未锁定物理笼位</span>'
+            return tagHtml('待排位审核', 'warning')
           },
         },
+        { key: 'item', title: '服务 / 规格', render: (r) => `${r.itemName}｜${r.spec}` },
       ],
       rows,
       actions: (row) => {
         if (auditPassed(row.auditStatus)) {
           return [
             { text: '办理现场入住', act: 'entry' },
-            { text: '调整排位', act: 'allocate' },
+            // { text: '调整排位', act: 'allocate' }, // 暂时隐藏
           ]
         }
         if (row.reserveStatus === 'expired_released') {
@@ -214,15 +297,22 @@ function renderIncoming(host: HTMLElement): void {
     },
     {
       onAction: (act, row) => {
-        if (act === 'entry') runGuarded('feeding:entry', () => openEntry(row))
-        if (act === 'allocate') runGuarded('order:approve', () => openAllocateDialog(row))
+        if (act === 'entry') runGuarded('feeding:entry', () => openEntry(row, onChanged))
+        if (act === 'allocate') runGuarded('order:approve', () => openAllocateDialog(row, preselectCageId, onChanged))
         if (act === 'reject') {
           const reason = prompt('请输入退回原因：')
-          if (reason) runGuarded('order:reject', () => showResult(rejectOrder(row.id, reason)))
+          if (reason) runGuarded('order:reject', () => {
+            const res = showResult(rejectOrder(row.id, reason))
+            if (res) onChanged?.()
+          })
         }
       },
     },
   )
+}
+
+function applicantOf(orderId: string) {
+  return data().orders.find((o) => o.id === orderId)
 }
 
 function renderFeedingTable(host: HTMLElement, rows: Feeding[]): void {
@@ -235,8 +325,8 @@ function renderFeedingTable(host: HTMLElement, rows: Feeding[]): void {
     const totalAnimals = rows.reduce((sum, f) => sum + (f.quantity || 0), 0)
     toolbar.innerHTML = `
       <div class="toolbar__actions">
-        <button class="btn btn-primary" data-act="to-incoming">办理新入场</button>
-        <button class="btn btn-default" data-act="to-cage">笼位空间看板</button>
+        <button class="btn btn-primary" data-act="to-incoming" style="display:none;">办理新入场</button>
+        <button class="btn btn-default" data-act="to-cage" style="display:none;">笼位空间看板</button>
       </div>
       <span class="hint">在养监控：当前共 <strong>${rows.length}</strong> 单 · 占用 <strong>${totalCages}</strong> 笼 · 在养动物 <strong>${totalAnimals}</strong> 只</span>
     `
@@ -266,57 +356,44 @@ function renderFeedingTable(host: HTMLElement, rows: Feeding[]): void {
           width: '105px',
           render: (r) => `<strong style="font-family:monospace;color:var(--c-title);">${escapeHtml(orderRef(r.orderId))}</strong>`,
         },
-        {
-          key: 'applicant',
-          title: '申请人 / 课题组',
-          width: '120px',
-          ellipsis: true,
-          render: (r) => {
-            const ord = data().orders.find((o) => o.id === r.orderId)
-            if (!ord) return '—'
-            return `👤 ${escapeHtml(ord.applicantName)}<br><span style="font-size:11px;color:#64748b;">${escapeHtml(ord.applicantOrg || '校内')}</span>`
-          },
-        },
-        {
-          key: 'animal',
-          title: '实验动物 / 规格',
-          ellipsis: true,
-          render: (r) => `<strong>${escapeHtml(r.animalName)}</strong> <span style="font-size:11px;color:#64748b;">(${r.quantity || 0}只)</span><br><span style="font-size:11px;color:#94a3b8;">${escapeHtml(r.spec)}</span>`,
-        },
+        { key: 'name', title: '姓名', width: '110px', render: (r) => applicantOf(r.orderId)?.applicantName ?? '—' },
+        { key: 'no', title: '学工号', width: '120px', render: (r) => applicantOf(r.orderId)?.applicantNo || '—' },
+        { key: 'org', title: '单位名称', render: (r) => applicantOf(r.orderId)?.applicantOrg || '—' },
         {
           key: 'cages',
           title: '在养笼位',
-          width: '130px',
+          width: '180px',
           render: (r) => {
-            const list = r.cageIds.map((id) => cageCode(id)).join('、')
-            return `<span>${escapeHtml(list || '—')}</span> <span style="font-size:11px;color:#0284c7;font-weight:600;">(${r.cageIds.length}笼)</span>`
+            const list = r.cageIds
+              .map((id) => {
+                const count = r.cageCounts?.[id]
+                return count != null && count > 0 ? `${cageCode(id)}（${count}只）` : cageCode(id)
+              })
+              .join('、')
+            return `<span>${escapeHtml(list || '—')}</span>`
           },
-        },
-        {
-          key: 'price',
-          title: '计费单价',
-          width: '85px',
-          align: 'right',
-          render: (r) => `${moneyText(r.unitPriceFen)}<br><span style="font-size:10px;color:#94a3b8;">/笼·天</span>`,
         },
         {
           key: 'period',
           title: '饲养周期',
-          width: '110px',
+          width: '150px',
           render: (r) => {
+            const total = r.feedDays ?? applicantOf(r.orderId)?.feedDays ?? 14
             const start = r.entryAt ?? '—'
-            const days = daysBetween(r.entryAt ?? todayStr(), r.exitAt ?? todayStr())
-            if (r.status === 'breeding') {
-              return `<span>${start}</span><br><span style="font-size:11px;color:#0369a1;font-weight:600;">在养 ${days} 天</span>`
-            }
-            return `<span>${start}</span><br><span style="font-size:11px;color:#64748b;">至 ${r.exitAt ?? '—'} (${days}天)</span>`
+            const end = r.status === 'breeding' ? addDays(r.entryAt ?? todayStr(), total) : (r.exitAt ?? '—')
+            const lived = daysBetween(r.entryAt ?? todayStr(), r.status === 'breeding' ? todayStr() : (r.exitAt ?? todayStr()))
+            const pct = Math.max(0, Math.min(100, Math.round((lived / Math.max(1, total)) * 100)))
+            const over = r.status === 'breeding' && lived > total
+            const fill = over ? '#d97706' : r.status === 'exited' ? '#94a3b8' : '#0284c7'
+            const prefix = r.status === 'breeding' ? '已住' : '实际住'
+            return `
+              <div class="period-cell">
+                <div class="period-cell__dates">${escapeHtml(start)} → ${escapeHtml(end)}</div>
+                <div class="period-cell__bar"><i style="width:${pct}%;background:${fill};"></i></div>
+                <div class="period-cell__nums">${prefix} <strong>${lived}</strong> / <strong>${total}</strong> 天${over ? `<span class="period-cell__over">超期 ${lived - total} 天</span>` : ''}</div>
+              </div>
+            `
           },
-        },
-        {
-          key: 'status',
-          title: '状态',
-          width: '70px',
-          render: (r) => (r.status === 'breeding' ? tagHtml('在养', 'primary') : tagHtml('已退出', 'success')),
         },
       ],
       rows,
@@ -326,7 +403,6 @@ function renderFeedingTable(host: HTMLElement, rows: Feeding[]): void {
           row.status === 'breeding' ? { text: '笼位变更', act: 'cage' } : null,
           row.status === 'breeding' ? { text: '耗材领用', act: 'supply' } : null,
           row.status === 'breeding' ? { text: '退出', act: 'exit', danger: true } : null,
-          { text: '区间计费', act: 'fee' },
         ].filter(Boolean) as RowAction[],
       queryActive: Object.values(view.filters).some(Boolean),
       emptyText: '当前范围暂无饲养业务',
@@ -345,10 +421,14 @@ function renderFeedingTable(host: HTMLElement, rows: Feeding[]): void {
 
 /* ---------------- 弹窗 ---------------- */
 
-function openAllocateDialog(order: Order): void {
+export function openAllocateDialog(order: Order, preselectCageId?: string, onChanged?: () => void): void {
   let curStart = order.expectStartDate || addDays(todayStr(), 1)
   let curDays = order.feedDays || 14
   let selectedCageIds = order.allocatedCageIds ? [...order.allocatedCageIds] : []
+  // 从笼位看板发起时，预选当前点击的空闲笼位
+  if (preselectCageId && !selectedCageIds.includes(preselectCageId)) {
+    selectedCageIds.push(preselectCageId)
+  }
 
   function buildDialogContent(): string {
     const end = addDays(curStart, curDays)
@@ -434,6 +514,7 @@ function openAllocateDialog(order: Order): void {
           if (res.ok) {
             showResult(res)
             dlg.close()
+            onChanged?.()
             rerender()
           } else {
             toast(res.message, 'error')
@@ -481,7 +562,7 @@ function openAllocateDialog(order: Order): void {
   attachListeners()
 }
 
-function openEntry(order: Order): void {
+export function openEntry(order: Order, onChanged?: () => void): void {
   const allocated = order.allocatedCageIds || []
   const preCages = data().cages.filter((c) => allocated.includes(c.id))
   const entryDate = todayStr()
@@ -550,6 +631,7 @@ function openEntry(order: Order): void {
           if (result.ok) {
             showResult(result)
             dlg.close()
+            onChanged?.()
             rerender()
           } else {
             toast(result.message, 'error')
@@ -560,22 +642,46 @@ function openEntry(order: Order): void {
   })
 }
 
-function openCageChange(feeding: Feeding): void {
+export function openCageChange(feeding: Feeding, onChanged?: () => void): void {
   const available = freeCages(todayStr())
-  const bodyHtml =
-    `<div class="field"><span class="field__label">生效日期 *</span><input type="date" id="fd-chg-date" value="${todayStr()}" /></div>` +
-    '<div class="field"><span class="field__label">变更原因 *</span><input type="text" id="fd-chg-reason" placeholder="请输入变更原因" /></div>' +
-    '<p class="hint">增加：勾选空闲笼位。减少：勾选当前占用笼位。“开始日含、结束日不含”，变更在所选日期零点生效。</p>' +
-    `<div class="table-wrap"><table><tbody>${[
-      ...available.map(
-        (c) =>
-          `<tr><td style="width:50px"><input type="checkbox" value="${c.id}" data-add="${c.id}" /></td><td>${c.code}</td><td>${c.room}｜${c.env}</td><td>空闲</td></tr>`,
-      ),
-      ...feeding.cageIds.map(
-        (id) =>
-          `<tr><td style="width:50px"><input type="checkbox" value="${id}" data-remove="${id}" /></td><td>${cageCode(id)}</td><td>${cageRoom(id)}</td><td>当前占用</td></tr>`,
-      ),
-    ].join('')}</tbody></table></div>`
+  const counts = feeding.cageCounts ?? {}
+  const fallback = feeding.cageIds.length ? Math.max(1, Math.round(feeding.quantity / feeding.cageIds.length)) : 0
+
+  const currentRows = feeding.cageIds
+    .map((id) => {
+      const cnt = counts[id] ?? fallback
+      return `<tr>
+        <td style="width:90px"><strong style="font-family:monospace;">${cageCode(id)}</strong></td>
+        <td>${cageRoom(id)}</td>
+        <td style="width:110px"><input type="number" class="cage-count" data-cage="${id}" min="0" max="5" value="${cnt}" style="width:72px;" /></td>
+        <td style="width:130px;font-size:11px;color:#64748b;">${cnt === 0 ? '<span style="color:#d97706;font-weight:600;">将释放</span>' : '在养'}</td>
+      </tr>`
+    })
+    .join('')
+
+  const availRows = available
+    .map(
+      (c) =>
+        `<tr>
+          <td style="width:50px"><input type="checkbox" class="cage-add" data-add="${c.id}" /></td>
+          <td><strong style="font-family:monospace;">${c.code}</strong></td>
+          <td>${c.room}｜${c.env}</td>
+          <td style="width:110px"><input type="number" class="cage-add-count" data-addcount="${c.id}" min="1" max="5" value="5" disabled style="width:72px;" /></td>
+        </tr>`,
+    )
+    .join('')
+
+  const bodyHtml = `
+    <div style="display:flex;gap:16px;">
+      <div class="field"><span class="field__label">生效日期 *</span><input type="date" id="fd-chg-date" value="${todayStr()}" /></div>
+      <div class="field" style="flex:1;"><span class="field__label">变更原因 *</span><input type="text" id="fd-chg-reason" placeholder="如：死亡 2 只 / 新生分笼" /></div>
+    </div>
+    <p class="hint">统一每笼上限 5 只。死亡就减少数量，减到 0 即释放该笼；需要更多笼位时勾选下方空闲笼分笼（默认每笼放入 5 只）。</p>
+    <div style="font-size:12px;font-weight:600;color:#0f172a;margin:12px 0 6px;">当前占用笼位</div>
+    <div class="table-wrap"><table><thead><tr><th>笼位</th><th>位置</th><th>在养数量</th><th>状态</th></tr></thead><tbody>${currentRows || '<tr><td colspan="4">无</td></tr>'}</tbody></table></div>
+    <div style="font-size:12px;font-weight:600;color:#0f172a;margin:14px 0 6px;">新增空闲笼位（勾选后填放入数量）</div>
+    <div class="table-wrap"><table><thead><tr><th></th><th>笼位</th><th>位置</th><th>放入数量</th></tr></thead><tbody>${availRows || '<tr><td colspan="4">暂无空闲笼位</td></tr>'}</tbody></table></div>
+  `
 
   const dlg = openDialog({
     title: `笼位变更 ${orderRef(feeding.orderId)}`,
@@ -590,18 +696,35 @@ function openCageChange(feeding: Feeding): void {
         onClick: () => {
           const date = (dlg.querySelector('#fd-chg-date') as HTMLInputElement).value
           const reason = (dlg.querySelector('#fd-chg-reason') as HTMLInputElement).value
-          const add = [...dlg.querySelectorAll<HTMLInputElement>('input[data-add]')].filter((i) => i.checked).map((i) => i.value)
-          const remove = [...dlg.querySelectorAll<HTMLInputElement>('input[data-remove]')].filter((i) => i.checked).map((i) => i.value)
-          const result = changeCages({ feedingId: feeding.id, addCageIds: add, removeCageIds: remove, date, reason })
+          const cageCounts: Record<string, number> = {}
+          dlg.querySelectorAll<HTMLInputElement>('input.cage-count').forEach((i) => {
+            cageCounts[i.dataset.cage!] = Number(i.value || 0)
+          })
+          dlg.querySelectorAll<HTMLInputElement>('input.cage-add').forEach((cb) => {
+            if (cb.checked) {
+              const cntInput = dlg.querySelector<HTMLInputElement>(`input[data-addcount="${cb.dataset.add}"]`)
+              cageCounts[cb.dataset.add!] = Number(cntInput?.value || 1)
+            }
+          })
+          const result = changeCages({ feedingId: feeding.id, date, reason, cageCounts })
           if (result.ok) {
             showResult(result)
             dlg.close()
+            onChanged?.()
           } else {
             toast(result.message, 'error')
           }
         },
       },
     ],
+  })
+
+  // 勾选空闲笼时启用对应数量输入
+  dlg.querySelectorAll<HTMLInputElement>('input.cage-add').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const cnt = dlg.querySelector<HTMLInputElement>(`input[data-addcount="${cb.dataset.add}"]`)
+      if (cnt) cnt.disabled = !cb.checked
+    })
   })
 }
 
@@ -625,7 +748,7 @@ function openSupply(feeding: Feeding): void {
   )
 }
 
-function openExit(feeding: Feeding): void {
+export function openExit(feeding: Feeding, onChanged?: () => void): void {
   formDialog(
     `饲养退出 ${orderRef(feeding.orderId)}`,
     [
@@ -636,6 +759,7 @@ function openExit(feeding: Feeding): void {
     (values) => {
       const result = exitFeeding(feeding.id, values.exitAt, values.reason)
       showResult(result)
+      if (result.ok) onChanged?.()
       return result.ok
     },
     '确认退出',
@@ -673,6 +797,30 @@ function openFee(feeding: Feeding): void {
     },
     '生成费用',
   )
+}
+
+function openOrderDetail(order: Order): void {
+  const grid = detailGrid([
+    ['订单编号', order.code],
+    ['类型', KIND_TEXT[order.kind]],
+    ['服务 / 品目', `${order.itemName}｜${order.spec}`],
+    ['数量', `${order.quantity}${order.unit}`],
+    ['申请人', order.applicantName],
+    ['申请人所属', order.applicantOrg || '—'],
+    ['审核状态', tagHtml(AUDIT_STATUS_TEXT[order.auditStatus], auditTone(order.auditStatus))],
+    ['当前阶段', tagHtml(FULFILL_TEXT[order.fulfillStatus], fulfillTone(order.fulfillStatus))],
+    ['提交日期', order.createdAt],
+    ['备注', order.remark || '—'],
+  ])
+
+  const dlg = openDialog({
+    title: `饲养寄养订单 ${order.code}`,
+    bodyHtml: '',
+    wide: true,
+  })
+  const body = dlg.querySelector('.dlg__body') as HTMLElement
+  grid.style.margin = '0 0 12px'
+  body.appendChild(grid)
 }
 
 export function openDetail(feeding: Feeding): void {

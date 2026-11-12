@@ -161,7 +161,7 @@ export const stockPage: PageDef = {
 
       const toolbar = el('div', 'toolbar')
       toolbar.innerHTML =
-        '<div class="toolbar__actions"><button class="btn btn-default" data-act="export">导出 CSV</button></div>' +
+        '<div class="toolbar__actions"><button class="btn btn-default" data-act="export">导出数据</button></div>' +
         `<span class="hint">${flowSummary(flowRows())}</span>`
       toolbar.querySelector('button[data-act="export"]')?.addEventListener('click', () => exportFlows(flowRows()))
       renderByTab(page, toolbar)
@@ -201,7 +201,7 @@ export const stockPage: PageDef = {
     toolbar.innerHTML =
       '<div class="toolbar__actions">' +
       '<button class="btn btn-primary" data-act="batch-check">发起盘点</button>' +
-      '<button class="btn btn-default" data-act="export-check">导出 CSV</button>' +
+      '<button class="btn btn-default" data-act="export-check">导出数据</button>' +
       '</div>' +
       `<span class="hint">${checkSummary(checkRows())}</span>`
     toolbar.querySelector('button[data-act="batch-check"]')?.addEventListener('click', () => runGuarded('stock:check', openBatchCheck))

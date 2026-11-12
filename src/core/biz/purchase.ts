@@ -214,7 +214,7 @@ function orderSupplier(o: Order): string | undefined {
   return o.supplierId || data().services.find((s) => s.id === o.serviceId)?.supplierId
 }
 
-/** 把外购订单标记为已发送供应商（按订单处理，不再要求先建批次） */
+/** 生成发送批次（可跨供应商）并标记订单已发送：单笔发送也记为一个批次 */
 export function markOrdersSent(orderIds: string[]): OpResult {
   const guard = assertAction('purchase:send')
   if (!guard.ok) return fail(guard.message)
@@ -226,8 +226,22 @@ export function markOrdersSent(orderIds: string[]): OpResult {
   if (orders.some((o) => o.auditStatus !== 'approved')) return fail('未通过确认的订单不能发送')
   if (orders.some((o) => o.fulfillStatus === 'sent')) return fail('存在已发送的订单，不能重复处理')
 
+  const supplierIds = [...new Set(orders.map((o) => orderSupplier(o) ?? '').filter(Boolean))]
+  const batchId = uid('pb')
+  const batch: PurchaseBatch = {
+    id: batchId,
+    labId: getCurrentUser().labId,
+    supplierIds,
+    orderIds: [...orderIds],
+    status: 'sent',
+    operator: getCurrentUser().name,
+    createdAt: todayStr(),
+    sentAt: todayStr(),
+  }
+
   updateData((d) => ({
     ...d,
+    purchaseBatches: [batch, ...d.purchaseBatches],
     orders: d.orders.map((o) =>
       orderIds.includes(o.id)
         ? {
@@ -247,133 +261,9 @@ export function markOrdersSent(orderIds: string[]): OpResult {
       note: '中心老师已完成外购需求汇总并正式发往供货商排产发货，预冻结项目经费已结转，厂商到校送达后直接电话联系学生交接，订单已办结',
     })
   })
-  log(`外购订单汇总并发送厂商 ${orders.length} 笔`, 'purchase', orderIds.join(','))
-  return done(`已将 ${orders.length} 笔外购订单状态更新为【汇总并发送厂商】，订单流程结束办结`)
+  log(`外购批次 ${batchId} 汇总并发送厂商 ${orders.length} 笔（${supplierIds.length} 家供应商）`, 'purchase', orderIds.join(','))
+  return done(`已生成发送批次（${supplierIds.length} 家供应商）并标记 ${orders.length} 笔订单为【汇总并发送厂商】，订单流程结束办结`, batchId)
 }
-
-/** 可汇总的外购订单：已通过确认、尚未进入批次、且已关联供应商 */
-export function collectableOrders(): Order[] {
-  const inBatch = new Set(data().purchaseBatches.flatMap((b) => b.orderIds))
-  return scoped(data().orders).filter(
-    (o) =>
-      o.kind === 'external' &&
-      o.auditStatus === 'approved' &&
-      o.fulfillStatus === 'pending_collect' &&
-      !inBatch.has(o.id) &&
-      !!orderSupplier(o),
-  )
-}
-
-export function createBatch(supplierId: string, orderIds: string[]): OpResult {
-  const guard = assertAction('purchase:batch')
-  if (!guard.ok) return fail(guard.message)
-  if (!supplierId) return fail('请选择供应商')
-  if (!orderIds.length) return fail('请至少选择一笔外购订单')
-
-  const supplier = data().suppliers.find((s) => s.id === supplierId)
-  if (!supplier) return fail('供应商不存在')
-
-  const orders = data().orders.filter((o) => orderIds.includes(o.id))
-  if (orders.length !== orderIds.length) return fail('选择的订单不存在')
-  if (orders.some((o) => o.kind !== 'external')) return fail('只能汇总外购订单')
-  if (orders.some((o) => o.labId !== getCurrentUser().labId)) return fail('不能汇总其他实验室的订单')
-  if (orders.some((o) => o.auditStatus !== 'approved')) return fail('未通过确认的订单不能汇总')
-  if (orders.some((o) => o.fulfillStatus !== 'pending_collect')) return fail('订单已加入批次或已发送')
-  if (orders.some((o) => orderSupplier(o) !== supplierId)) return fail('只能汇总同一供应商的订单')
-
-  const batchId = uid('pb')
-  updateData((d) => ({
-    ...d,
-    purchaseBatches: [
-      {
-        id: batchId,
-        labId: supplier.labId,
-        supplierId,
-        orderIds,
-        status: 'draft',
-        operator: getCurrentUser().name,
-        createdAt: todayStr(),
-      },
-      ...d.purchaseBatches,
-    ],
-    orders: d.orders.map((o) =>
-      orderIds.includes(o.id) ? { ...o, fulfillStatus: 'pending_send' as const, updatedAt: todayStr() } : o,
-    ),
-  }))
-
-  orders.forEach((o) =>
-    addOrderEvent(o.id, { at: todayStr(), actor: getCurrentUser().name, action: `加入外购批次（供应商：${supplier.name}）` }),
-  )
-  log(`按供应商 ${supplier.name} 汇总 ${orderIds.length} 笔外购订单`, 'purchase', batchId)
-  return done(`已汇总 ${orderIds.length} 笔订单，可导出清单后标记已发送`, batchId)
-}
-
-export function markSent(batchId: string): OpResult {
-  const guard = assertAction('purchase:send')
-  if (!guard.ok) return fail(guard.message)
-  const batch = data().purchaseBatches.find((b) => b.id === batchId)
-  if (!batch) return fail('批次不存在')
-  if (batch.labId !== getCurrentUser().labId) return fail('不能操作其他实验室的批次')
-  if (batch.status === 'sent') return fail('该批次已发送，不会重复生成发送记录')
-
-  updateData((d) => ({
-    ...d,
-    purchaseBatches: d.purchaseBatches.map((b) =>
-      b.id === batchId ? { ...b, status: 'sent' as const, sentAt: todayStr() } : b,
-    ),
-    orders: d.orders.map((o) =>
-      batch.orderIds.includes(o.id)
-        ? {
-            ...o,
-            fulfillStatus: 'sent' as const,
-            feeStatus: 'charged' as const,
-            updatedAt: todayStr(),
-          }
-        : o,
-    ),
-  }))
-
-  batch.orderIds.forEach((id) =>
-    addOrderEvent(id, {
-      at: todayStr(),
-      actor: getCurrentUser().name,
-      action: '汇总并发送厂商（订单结束）',
-      note: '外购批次已汇总并正式发送厂商，厂商到货电话联系学生领走，订单办结',
-    }),
-  )
-  log(`外购批次 ${batchId} 汇总并发送厂商`, 'purchase', batchId)
-  return done(`已标记发送，共 ${batch.orderIds.length} 笔订单状态更新为【汇总并发送厂商】，订单流程结束`)
-}
-
-/** 批次明细：导出 CSV 与页面预览使用同一份数据 */
-export function batchRows(batchId: string): string[][] {
-  const batch = data().purchaseBatches.find((b) => b.id === batchId)
-  if (!batch) return []
-  const orders = data().orders.filter((o) => batch.orderIds.includes(o.id))
-  return orders.map((o) => [
-    o.code,
-    o.itemName,
-    o.spec,
-    String(o.quantity),
-    o.unit,
-    o.applicantName,
-    o.applicantOrg,
-    `${(o.unitPriceFen / 100).toFixed(2)}`,
-    `${(((o.confirmedAmountFen ?? o.quantity * o.unitPriceFen) as number) / 100).toFixed(2)}`,
-  ])
-}
-
-export const BATCH_CSV_HEADER = [
-  '订单编号',
-  '品目',
-  '规格',
-  '数量',
-  '单位',
-  '申请人',
-  '申请人所属',
-  '单价（元）',
-  '金额（元）',
-]
 
 export interface AnomalyInput {
   orderId: string
@@ -392,7 +282,7 @@ export function registerAnomaly(input: AnomalyInput): OpResult {
   if (!input.description.trim()) return fail('请填写反馈内容')
 
   const id = uid('an')
-  const supplierId = data().purchaseBatches.find((b) => b.orderIds.includes(order.id))?.supplierId ?? ''
+  const supplierId = orderSupplier(order) ?? ''
   updateData((d) => ({
     ...d,
     anomalies: [

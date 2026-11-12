@@ -86,6 +86,67 @@ export function confirmDialog(title: string, message: string, confirmText = '确
   })
 }
 
+/* ---------------- 抽屉（右侧滑出） ---------------- */
+
+export interface DrawerOptions {
+  title: string
+  bodyHtml?: string
+  actions?: DialogAction[]
+  /** 宽度（px），默认 560 */
+  width?: number
+}
+
+export interface DrawerInstance {
+  node: HTMLElement
+  body: HTMLElement
+  close(): void
+}
+
+export function openDrawer(opts: DrawerOptions): DrawerInstance {
+  const mask = el('div', 'drawer-mask')
+  const drawer = el('div', 'drawer')
+  if (opts.width) drawer.style.width = `${opts.width}px`
+
+  drawer.innerHTML = `
+    <div class="drawer__head">
+      <h2 class="drawer__title">${escapeHtml(opts.title)}</h2>
+      <button class="drawer__close" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="drawer__body">${opts.bodyHtml ?? ''}</div>
+    <div class="drawer__foot"></div>
+  `
+
+  const body = drawer.querySelector('.drawer__body') as HTMLElement
+  const foot = drawer.querySelector('.drawer__foot') as HTMLElement
+
+  function onKey(ev: KeyboardEvent): void {
+    if (ev.key === 'Escape') closeDrawer()
+  }
+  function closeDrawer(): void {
+    document.removeEventListener('keydown', onKey)
+    mask.remove()
+  }
+
+  drawer.querySelector('.drawer__close')?.addEventListener('click', closeDrawer)
+
+  const actions = opts.actions?.length ? opts.actions : [{ text: '关闭', primary: true }]
+  actions.forEach((a) => {
+    const btn = el('button', `btn ${a.primary ? 'btn-primary' : a.danger ? 'btn-danger' : 'btn-default'}`, a.text)
+    btn.addEventListener('click', () => {
+      a.onClick?.()
+      if (!a.keepOpen) closeDrawer()
+    })
+    foot.appendChild(btn)
+  })
+
+  mask.appendChild(drawer)
+  document.body.appendChild(mask)
+  document.addEventListener('keydown', onKey)
+  requestAnimationFrame(() => mask.classList.add('is-open'))
+
+  return { node: drawer, body, close: closeDrawer }
+}
+
 /* ---------------- 数据状态（规范 6 章） ---------------- */
 
 const ICON_EMPTY = `<svg class="state-area__icon" viewBox="0 0 64 64" aria-hidden="true">

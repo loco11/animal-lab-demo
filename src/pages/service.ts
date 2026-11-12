@@ -4,7 +4,7 @@ import { listServices, saveService, toggleSale } from '../core/biz/service'
 import { categoryDef } from '../core/biz/stock'
 import { listSupplierItems } from '../core/biz/purchase'
 import { showResult, buildQuery, runGuarded } from './common'
-import { escapeHtml, moneyText, parseYuan } from '../core/utils'
+import { downloadCSV, escapeHtml, moneyText, parseYuan, todayStr } from '../core/utils'
 import { AUDIT_MODE_TEXT } from '../core/labels'
 import { data, scoped } from '../core/data'
 import type { AuditMode, Service } from '../types'
@@ -66,10 +66,12 @@ export const servicePage: PageDef = {
 
     const toolbar = el('div', 'toolbar')
     toolbar.innerHTML =
-      '<div class="toolbar__actions"><button class="btn btn-primary" data-act="create">新增服务</button></div>'
+      '<div class="toolbar__actions"><button class="btn btn-primary" data-act="create">新增服务</button>' +
+      '<button class="btn btn-default" data-act="export">导出数据</button></div>'
     toolbar.querySelector('button[data-act="create"]')?.addEventListener('click', () => {
       runGuarded('service:edit', () => openEdit())
     })
+    toolbar.querySelector('button[data-act="export"]')?.addEventListener('click', () => exportServices())
 
     const rows = filtered()
     // 规范 5／7 章：工具栏与表格共用一个白色容器
@@ -97,6 +99,12 @@ export const servicePage: PageDef = {
           },
           { key: 'audit', title: '审核方式', width: '100px', render: (r) => AUDIT_MODE_TEXT[r.auditMode] },
           {
+            key: 'iacuc',
+            title: '伦理审批编号',
+            width: '130px',
+            render: (r) => (r.iacucRequired ? tagHtml('需填写编号', 'warning') : tagHtml('无需填写', 'default')),
+          },
+          {
             key: 'stock',
             title: '履约模式 / 关联',
             ellipsis: true,
@@ -121,6 +129,8 @@ export const servicePage: PageDef = {
           r.onSale
             ? { text: '下架', act: 'off', danger: true }
             : { text: '上架', act: 'on' },
+          { text: '设置使用人员', act: 'setUsers' },
+          { text: '设备权限配置', act: 'devicePerm' },
         ] as RowAction[],
         queryActive: Object.values(view.filters).some(Boolean),
         emptyText: '当前实验室暂无服务，可点击“新增服务”添加',
@@ -130,6 +140,7 @@ export const servicePage: PageDef = {
           if (act === 'edit') runGuarded('service:edit', () => openEdit(row))
           if (act === 'on') runGuarded('service:edit', () => showResult(toggleSale(row.id, true)))
           if (act === 'off') runGuarded('service:edit', () => showResult(toggleSale(row.id, false)))
+          // 占位按钮：setUsers（设置使用人员）、devicePerm（设备权限配置）暂未实现功能
         },
       },
     )
@@ -162,6 +173,41 @@ function filtered(): Service[] {
   if (onSale === '0') list = list.filter((s) => !s.onSale)
   const start = (view.page - 1) * view.pageSize
   return list.slice(start, start + view.pageSize)
+}
+
+function exportServices(): void {
+  // 导出不分页：按当前筛选条件取全量
+  let list = listServices()
+  const { name, type, onSale } = view.filters
+  if (name) list = list.filter((s) => s.name.includes(name))
+  if (type === 'animal_internal') list = list.filter((s) => s.type === 'animal' && Boolean(s.stockItemId))
+  else if (type === 'animal_external') list = list.filter((s) => s.type === 'animal' && !s.stockItemId)
+  else if (type === 'breeding') list = list.filter((s) => s.type === 'breeding')
+  else if (type === 'animal') list = list.filter((s) => s.type === 'animal')
+  if (onSale === '1') list = list.filter((s) => s.onSale)
+  if (onSale === '0') list = list.filter((s) => !s.onSale)
+
+  if (!list.length) {
+    toast('当前列表没有可导出的数据', 'error')
+    return
+  }
+  const typeText = (s: Service) => (s.type === 'breeding' ? '饲养寄养' : s.stockItemId ? '自产动物' : '外购代采')
+  const modeText = (s: Service) => (s.type === 'breeding' ? '笼位按日结算' : s.stockItemId ? '自繁自育' : '厂商直送')
+  downloadCSV(
+    `服务台账_${todayStr()}.csv`,
+    ['服务名称', '服务类型', '规格型号', '收费标准', '审核方式', '伦理审批编号', '履约模式', '状态'],
+    list.map((s) => [
+      s.name,
+      typeText(s),
+      s.spec,
+      `${(s.unitPriceFen / 100).toFixed(2)} 元/${s.unit}`,
+      AUDIT_MODE_TEXT[s.auditMode],
+      s.iacucRequired ? '需填写编号' : '无需填写编号',
+      modeText(s),
+      s.onSale ? '已上架' : '已下架',
+    ]),
+  )
+  toast(`已导出 ${list.length} 条`, 'success')
 }
 
 function stockName(serviceId: string): string {
@@ -263,6 +309,18 @@ function openEdit(service?: Service): void {
       },
       {
         kind: 'select',
+        key: 'iacucRequired',
+        label: '伦理审批编号',
+        value: service ? (service.iacucRequired ? '1' : '0') : '1',
+        options: [
+          { value: '1', label: '需填写编号' },
+          { value: '0', label: '无需填写编号' },
+        ],
+        required: true,
+        hint: '需填写时，申请人须提交学校下发的伦理审批编号，编号不在下发范围内将无法提交申请',
+      },
+      {
+        kind: 'select',
         key: 'onSale',
         label: '上架状态',
         value: service ? (service.onSale ? '1' : '0') : '1',
@@ -339,6 +397,7 @@ function openEdit(service?: Service): void {
         unit: values.unit,
         unitPriceFen: fen,
         auditMode: values.auditMode as AuditMode,
+        iacucRequired: values.iacucRequired === '1',
         onSale: values.onSale === '1',
         applyNote: values.applyNote,
         stockItemId: realStockItemId,

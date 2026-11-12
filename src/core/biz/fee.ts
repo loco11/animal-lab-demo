@@ -127,7 +127,7 @@ export function submitCharge(input: SubmitInput): OpResult {
   }
   if (!input.projectId) return fail('请选择扣费的校内经费项目')
   const project = s.projects.find((p) => p.id === input.projectId)
-  if (!project || !project.enabled) return fail('所选经费项目不可用')
+  if (!project || project.status !== 'active') return fail('所选经费项目不可用')
   if (!input.applicantName) return fail('请确认申请人')
 
   const existing = requestsOfFee(fee.id)

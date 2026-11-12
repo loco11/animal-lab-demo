@@ -17,6 +17,7 @@ import { feePage } from './fee'
 import { menuPage } from './menu'
 import { rolePage } from './role'
 import { userPage } from './user'
+import { projectPage } from './project'
 
 registerPage('/hub', { title: '业务全景', render: hubPage })
 registerPage('/mobile', { title: '移动办事端', render: mobilePage })
@@ -35,3 +36,4 @@ registerPage('/fee', feePage)
 registerPage('/system/menu', menuPage)
 registerPage('/system/role', rolePage)
 registerPage('/system/user', userPage)
+registerPage('/system/project', projectPage)

@@ -7,12 +7,14 @@
  */
 
 import { availableStockOf } from '../core/biz/stock'
+import { takeNumber } from '../core/biz/serviceCall'
 import { data, updateData } from '../core/data'
 import { KIND_INITIAL_FULFILL } from '../core/labels'
 import { notify } from '../core/store'
 import { escapeHtml, moneyText, todayStr, uid, addDays } from '../core/utils'
-import type { Order, OrderKind } from '../types'
+import type { Feeding, Order, OrderKind } from '../types'
 import { el, toast } from '../ui'
+import { showResult } from './common'
 
 // 现代矢量线性图标
 const ICON_HOME = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`
@@ -22,8 +24,16 @@ const ICON_USER = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 // 当前移动端全局状态（模块级持久化，在 notify/rerender 时保持用户所在视图）
 let currentView: 'home' | 'orders' | 'apply' = 'home'
 let currentApplyKind: OrderKind = 'internal'
-let orderFilter: 'all' | 'processing' | 'completed' = 'all'
+let orderFilter: 'all' | 'processing' | 'completed' = 'processing'
+let kindFilter: 'all' | 'internal' | 'external' | 'breeding' = 'all'
 const expandedOrderIds = new Set<string>()
+
+/** 学生视角的订单类型短文案（与订单筛选条口径一致） */
+const KIND_SHORT: Record<OrderKind, string> = {
+  internal: '自产动物',
+  external: '外购代采',
+  breeding: '饲养寄养',
+}
 
 /** 订单生命周期业务终态判定：已完成 */
 export function isOrderCompleted(o: Order): boolean {
@@ -36,6 +46,48 @@ export function isOrderCompleted(o: Order): boolean {
 /** 订单生命周期业务状态判定：进行中（未到终态且未被退回） */
 export function isOrderProcessing(o: Order): boolean {
   return !isOrderCompleted(o) && o.auditStatus !== 'rejected'
+}
+
+/** 学生"我的订单"演示数据：只保留 8 种核心状态，每种取 1 条代表 */
+const STUDENT_STATUS_ORDER = [
+  'internal_pending_out',
+  'internal_completed',
+  'external_pending_send',
+  'external_completed',
+  'breeding_pending_seat',
+  'breeding_approved_incoming',
+  'breeding_in',
+  'breeding_exited',
+] as const
+
+function studentStatusKey(o: Order): string | null {
+  if (o.auditStatus === 'rejected') return null
+  if (o.kind === 'internal') {
+    if (o.auditStatus === 'pending') return null
+    if (o.fulfillStatus === 'pending_out') return 'internal_pending_out'
+    if (o.fulfillStatus === 'completed') return 'internal_completed'
+    return null
+  }
+  if (o.kind === 'external') {
+    if (o.auditStatus === 'pending') return null
+    if (o.fulfillStatus === 'pending_collect' || o.fulfillStatus === 'pending_send') return 'external_pending_send'
+    if (o.fulfillStatus === 'sent') return 'external_completed'
+    return null
+  }
+  if (o.auditStatus === 'pending') return 'breeding_pending_seat'
+  if (o.fulfillStatus === 'incoming') return 'breeding_approved_incoming'
+  if (o.fulfillStatus === 'breeding') return 'breeding_in'
+  if (o.fulfillStatus === 'exited') return 'breeding_exited'
+  return null
+}
+
+function studentDemoOrders(orders: Order[]): Order[] {
+  const picked = new Map<string, Order>()
+  for (const o of orders) {
+    const k = studentStatusKey(o)
+    if (k && !picked.has(k)) picked.set(k, o)
+  }
+  return STUDENT_STATUS_ORDER.map((k) => picked.get(k)).filter((o): o is Order => !!o)
 }
 
 export function mobilePage(host: HTMLElement): void {
@@ -352,7 +404,7 @@ export function mobilePage(host: HTMLElement): void {
     }
 
     // 2. 科研项目数据源（精准过滤当前中心及导师授权课题，避免跨中心重名）
-    const allProjects = data().projects.filter((p) => p.enabled && p.labId === 'animal')
+    const allProjects = data().projects.filter((p) => p.status === 'active' && p.labId === 'animal')
     const projectOptions = allProjects.map((p) => ({
       id: p.id,
       title: p.name,
@@ -415,8 +467,8 @@ export function mobilePage(host: HTMLElement): void {
             ${
               isBreeding
                 ? `
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-                <div class="apply-field">
+              <div style="display:grid;grid-template-columns:1fr;gap:12px;">
+                <div class="apply-field" style="display:none;">
                   <label class="apply-label">拟入场日期 *</label>
                   <input type="date" class="apply-input" id="apply-expect-date" value="${addDays(todayStr(), 1)}" min="${todayStr()}" />
                 </div>
@@ -444,12 +496,6 @@ export function mobilePage(host: HTMLElement): void {
                     <span style="font-size:12px;color:#64748b;">笼</span>
                   </div>
                 </div>
-              </div>
-
-              <!-- IACUC 伦理审批编号 -->
-              <div class="apply-field" style="margin-top:10px;">
-                <label class="apply-label">IACUC 实验动物伦理审批编号</label>
-                <input type="text" class="apply-input" id="apply-iacuc" value="GZMU-IACUC-2026-088" placeholder="如：GZMU-IACUC-2026-088" />
               </div>
             `
                 : `
@@ -504,6 +550,12 @@ export function mobilePage(host: HTMLElement): void {
                 rows="3"
                 placeholder="请输入实验用途或课题说明..."
               ></textarea>
+            </div>
+
+            <!-- 字段 5.5：IACUC 伦理审批编号（三类服务通用） -->
+            <div class="apply-field">
+              <label class="apply-label">IACUC 实验动物伦理审批编号</label>
+              <input type="text" class="apply-input" id="apply-iacuc" value="GZMU-IACUC-2026-088" placeholder="如：GZMU-IACUC-2026-088" />
             </div>
 
             <!-- 字段 6：自产动物现货预留与线下交接规则（仅自产动物） -->
@@ -732,7 +784,7 @@ export function mobilePage(host: HTMLElement): void {
       const qty = parseInt(qtyInput.value || (isBreeding ? String(recCages) : '10'), 10)
       const feedDays = isBreeding && daysInput ? (parseInt(daysInput.value || '14', 10) || 14) : undefined
       const expectEndDate = isBreeding && expectStartDate && feedDays ? addDays(expectStartDate, feedDays) : undefined
-      const iacucNo = isBreeding ? (iacucInput?.value?.trim() || 'GZMU-IACUC-2026-088') : undefined
+      const iacucNo = iacucInput?.value?.trim() || 'GZMU-IACUC-2026-088'
       const totalFen = isBreeding ? price * qty * (feedDays || 14) : price * qty
       const projectId = selectedProjectId
       const remark = remarkArea?.value || (isBreeding ? 'SPF屏障笼位饲养及实验观测' : '科研实验用途')
@@ -818,11 +870,14 @@ export function mobilePage(host: HTMLElement): void {
      页面 3：【我的订单】（状态过滤条 + 订单卡片列表 + 展开时间轴）
      ========================================================================== */
   function renderOrdersPage(slot: HTMLElement): void {
-    const allOrders = data().orders.slice().reverse()
+    const allOrders = studentDemoOrders(data().orders)
     const processingOrders = allOrders.filter(isOrderProcessing)
     const completedOrders = allOrders.filter(isOrderCompleted)
 
+    const statusText = ({ processing: '进行中', completed: '已完成', all: '全部' } as const)[orderFilter]
+
     const filteredOrders = allOrders.filter((o) => {
+      if (kindFilter !== 'all' && o.kind !== kindFilter) return false
       if (orderFilter === 'processing') return isOrderProcessing(o)
       if (orderFilter === 'completed') return isOrderCompleted(o)
       return true
@@ -831,15 +886,20 @@ export function mobilePage(host: HTMLElement): void {
     slot.innerHTML = `
       <div class="orders-page">
         <div class="orders-page__header">
-          <h2 class="orders-page__title">我的办件订单</h2>
-          <span style="font-size:12px;color:#2563eb;cursor:pointer;font-weight:600;" id="orders-refresh-btn">刷新 ↻</span>
+          <span style="font-size:12px;color:#2563eb;cursor:pointer;font-weight:600;display:none;" id="orders-refresh-btn">刷新 ↻</span>
         </div>
 
-        <!-- 订单状态过滤条：三大核心分类 -->
-        <div class="orders-filter-bar">
-          <div class="orders-filter-chip ${orderFilter === 'all' ? 'is-active' : ''}" data-filter="all">全部 (${allOrders.length})</div>
-          <div class="orders-filter-chip ${orderFilter === 'processing' ? 'is-active' : ''}" data-filter="processing">进行中 (${processingOrders.length})</div>
-          <div class="orders-filter-chip ${orderFilter === 'completed' ? 'is-active' : ''}" data-filter="completed">已完成 (${completedOrders.length})</div>
+        <!-- 筛选行：服务类型胶囊 Tab（默认展示） + 最右侧状态下拉筛选 -->
+        <div class="orders-filter-row">
+          <div class="orders-kind-tabs" id="orders-kind-tabs">
+            <button class="orders-kind-tab ${kindFilter === 'internal' ? 'is-active' : ''}" data-kind="internal" type="button">自产动物</button>
+            <button class="orders-kind-tab ${kindFilter === 'external' ? 'is-active' : ''}" data-kind="external" type="button">外购代采</button>
+            <button class="orders-kind-tab ${kindFilter === 'breeding' ? 'is-active' : ''}" data-kind="breeding" type="button">饲养寄养</button>
+          </div>
+          <div class="mobile-picker-trigger orders-status-trigger" id="trigger-order-status" tabindex="0">
+            <span class="mobile-picker-trigger__text" id="trigger-order-status-text">${statusText}</span>
+            <span class="mobile-picker-trigger__arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg></span>
+          </div>
         </div>
 
         <!-- 订单卡片列表 -->
@@ -852,13 +912,28 @@ export function mobilePage(host: HTMLElement): void {
       toast('订单状态已与中心管理端实时对齐', 'success')
     })
 
-    slot.querySelectorAll('.orders-filter-chip').forEach((chip) => {
-      chip.addEventListener('click', () => {
-        const f = chip.getAttribute('data-filter') as any
-        if (f) {
-          orderFilter = f
+    const appContainer = slot.closest('.mobile-app-container') as HTMLElement
+    slot.querySelector('#trigger-order-status')?.addEventListener('click', () => {
+      openMobilePicker(appContainer, {
+        title: '筛选订单状态',
+        options: [
+          { id: 'processing', title: '进行中', sub: `${processingOrders.length} 单` },
+          { id: 'completed', title: '已完成', sub: `${completedOrders.length} 单` },
+          { id: 'all', title: '全部', sub: `${allOrders.length} 单` },
+        ],
+        selectedId: orderFilter,
+        onSelect: (item) => {
+          orderFilter = item.id as 'all' | 'processing' | 'completed'
           renderOrdersPage(slot)
-        }
+        },
+      })
+    })
+    slot.querySelectorAll('#orders-kind-tabs .orders-kind-tab').forEach((tab) => {
+      tab.addEventListener('click', (e) => {
+        e.stopPropagation()
+        const next = (tab as HTMLElement).dataset.kind as 'internal' | 'external' | 'breeding'
+        kindFilter = kindFilter === next ? 'all' : next
+        renderOrdersPage(slot)
       })
     })
 
@@ -879,6 +954,9 @@ export function mobilePage(host: HTMLElement): void {
       const occupiedCages = feeding
         ? data().cages.filter((c) => feeding.cageIds.includes(c.id)).map((c) => c.code)
         : []
+      const lastChange = feeding?.changeLogs?.length
+        ? feeding.changeLogs[feeding.changeLogs.length - 1].at
+        : null
 
       let statusBadgeClass = 'order-status-pill--done'
       let statusText = '已完成'
@@ -952,27 +1030,13 @@ export function mobilePage(host: HTMLElement): void {
         o.fulfillStatus === 'exited'
 
       const card = el('div', 'order-item-card')
-      card.innerHTML = `
-        <div class="order-item-card__head">
-          <span class="order-item-card__code">${o.code}</span>
-          <span class="order-status-pill ${statusBadgeClass}">${statusText}</span>
-        </div>
 
+      const detailHtml = `
         <div class="order-item-card__body">
-          <h4 class="order-item-card__title">${o.serviceName}</h4>
           ${
             o.kind === 'breeding'
               ? `
-            <div class="order-item-card__meta">
-              预订规模：拟养 <strong>${o.animalCount || 20} 只</strong> ➔ 预订 <strong>${o.quantity} 笼</strong> · 拟养 <strong>${o.feedDays || 14} 天</strong>
-            </div>
             <div class="order-item-card__meta">IACUC 伦理：${escapeHtml(o.iacucNo || 'GZMU-IACUC-2026-088')}</div>
-            <div class="order-item-card__meta">
-              课题经费：${o.projectId ? '已关联科研项目直接划转' : '基础医学院中药药理课题组'}
-              <span style="font-size:11px;color:${o.feeStatus === 'charged' ? '#059669' : '#d97706'};font-weight:600;margin-left:4px;">
-                (${o.feeStatus === 'charged' ? '基础预付已正式划扣·不退' : '经费已预冻结'})
-              </span>
-            </div>
             ${
               o.fulfillStatus === 'breeding' && feeding
                 ? `
@@ -1011,15 +1075,6 @@ export function mobilePage(host: HTMLElement): void {
             <div class="order-item-card__meta" style="color:#059669;font-weight:600;margin-top:4px;">状态说明：${statusHint}</div>
           `
               : `
-            <div class="order-item-card__meta">品规数量：${o.spec} × <strong>${o.quantity} ${o.unit}</strong></div>
-            <div class="order-item-card__meta">
-              课题经费：${o.projectId ? '已关联科研项目直接划转' : '基础医学院中药药理课题组'}
-              ${
-                o.kind === 'external'
-                  ? `<span style="font-size:11px;color:${o.feeStatus === 'charged' ? '#059669' : '#d97706'};font-weight:600;margin-left:4px;">(${o.feeStatus === 'charged' ? '预冻结已划扣结转' : '经费已预冻结'})</span>`
-                  : ''
-              }
-            </div>
             ${
               o.kind === 'internal' && o.fulfillStatus === 'pending_out'
                 ? `
@@ -1064,15 +1119,7 @@ export function mobilePage(host: HTMLElement): void {
           }
         </div>
 
-        <div class="order-item-card__foot">
-          <span>申请时间：${o.createdAt}</span>
-          <span style="color:#2563eb;font-weight:600;">${isExpanded ? '收起流转 ▲' : '审批流转 ▼'}</span>
-        </div>
-
-        ${
-          isExpanded
-            ? `
-          <div class="order-timeline-box">
+        <div class="order-timeline-box">
             <div class="timeline-step is-done">
               <div class="timeline-step__dot"></div>
               <div>
@@ -1177,9 +1224,63 @@ export function mobilePage(host: HTMLElement): void {
                 : ''
             }
           </div>
-        `
-            : ''
-        }
+      `
+
+      card.innerHTML = `
+        <div class="order-item-card__head">
+          <div class="order-item-card__heading">
+            <h4 class="order-item-card__title">${o.serviceName}（${KIND_SHORT[o.kind]}）</h4>
+            <div class="order-item-card__subtitle">订单编号 ${o.code}</div>
+          </div>
+          <span class="order-status-dot order-status-dot--${statusBadgeClass.replace('order-status-pill--', '')}"><span class="order-status-dot__dot"></span>${statusText}</span>
+        </div>
+
+        <div class="order-item-card__panel">
+          <div class="order-kv">
+            <span class="order-kv__label">下单时间</span>
+            <span class="order-kv__value">${o.createdAt}</span>
+          </div>
+          <div class="order-kv">
+            <span class="order-kv__label">${o.kind === 'breeding' ? '预订规模' : '品规数量'}</span>
+            <span class="order-kv__value">${
+              o.kind === 'breeding'
+                ? `${o.animalCount || 20} 只 · ${o.quantity} 笼 · ${o.feedDays || 14} 天`
+                : `${o.spec} × ${o.quantity} ${o.unit}`
+            }</span>
+          </div>
+          <div class="order-kv">
+            <span class="order-kv__label">课题经费</span>
+            <span class="order-kv__value">${o.projectId ? '科研项目直接划转' : '基础医学院中药药理课题组'}</span>
+          </div>
+          ${
+            o.kind === 'breeding' && o.fulfillStatus === 'breeding' && feeding
+              ? `
+          <div class="order-kv order-kv--full">
+            <span class="order-kv__label">寄养状态</span>
+            <span class="order-kv__value order-kv__value--strong">${feeding.cageIds.length} 笼 · 共 ${feeding.quantity} 只${lastChange ? ` · 最近调笼 ${lastChange}` : ''}</span>
+          </div>`
+              : ''
+          }
+        </div>
+
+        <div class="order-item-card__foot">
+          <span class="order-detail-toggle">${isExpanded ? '收起详情 ▲' : '查看详情 ▼'}</span>
+          <span class="order-item-card__actions">
+            ${
+              o.kind === 'breeding' && o.fulfillStatus === 'breeding' && feeding
+                ? `<button class="breeding-status-btn" data-breeding-status="${o.id}" type="button">实时寄养状态</button>`
+                : ''
+            }
+            ${
+              (o.kind === 'internal' && o.fulfillStatus === 'pending_out') ||
+              (o.kind === 'breeding' && o.fulfillStatus === 'incoming' && o.auditStatus === 'approved')
+                ? `<button class="take-num-btn" data-take="${o.id}" type="button">现场取号</button>`
+                : ''
+            }
+          </span>
+        </div>
+
+        ${isExpanded ? detailHtml : ''}
       `
 
       card.addEventListener('click', () => {
@@ -1189,6 +1290,19 @@ export function mobilePage(host: HTMLElement): void {
           expandedOrderIds.add(o.id)
         }
         renderOrdersPage(slot)
+      })
+
+      card.querySelector('button[data-take]')?.addEventListener('click', (e) => {
+        e.stopPropagation()
+        const result = takeNumber(o.id)
+        showResult(result)
+        renderOrdersPage(slot)
+      })
+
+      card.querySelector('button[data-breeding-status]')?.addEventListener('click', (e) => {
+        e.stopPropagation()
+        const f = data().feedings.find((x) => x.orderId === o.id)
+        if (f) openBreedingStatusSheet(appContainer, f, o)
       })
 
       listBody.appendChild(card)
@@ -1296,5 +1410,100 @@ function openMobilePicker(container: HTMLElement, opts: MobilePickerOptions): vo
       close()
     })
   })
+}
+
+/** 饲养寄养「实时寄养状态」底部抽屉：每笼在养数量 + 笼位变更流水 */
+function openBreedingStatusSheet(container: HTMLElement, feeding: Feeding, order: Order): void {
+  container.querySelectorAll('.mobile-picker-mask, .mobile-picker-sheet').forEach((el) => el.remove())
+
+  const mask = el('div', 'mobile-picker-mask')
+  const sheet = el('div', 'mobile-picker-sheet')
+
+  const cages = data().cages
+  const cageRows = feeding.cageIds
+    .map((cid) => {
+      const cage = cages.find((c) => c.id === cid)
+      const count = feeding.cageCounts?.[cid] ?? 0
+      return `
+        <div class="breeding-cage-row">
+          <div class="breeding-cage-row__left">
+            <span class="breeding-cage-row__code">${cage ? escapeHtml(cage.code) : escapeHtml(cid)}</span>
+            ${cage ? `<span class="breeding-cage-row__meta">${escapeHtml(cage.room || '')}${cage.env ? ' · ' + cage.env : ''}</span>` : ''}
+          </div>
+          <span class="breeding-cage-row__count">${count} 只</span>
+        </div>`
+    })
+    .join('')
+
+  const changeLogs = (feeding.changeLogs || [])
+    .slice()
+    .reverse()
+    .map(
+      (log) => `
+        <div class="breeding-log-item">
+          <div class="breeding-log-item__head">${log.at} · ${escapeHtml(log.action)}</div>
+          <div class="breeding-log-item__body">在养笼数 ${log.beforeCages} ➔ ${log.afterCages} 笼</div>
+          <div class="breeding-log-item__note">${escapeHtml(log.note)}</div>
+          ${log.operator ? `<div class="breeding-log-item__op">经办：${escapeHtml(log.operator)}</div>` : ''}
+        </div>`,
+    )
+    .join('')
+
+  sheet.innerHTML = `
+    <div class="mobile-picker-handle-bar"><div class="mobile-picker-handle"></div></div>
+    <div class="mobile-picker-header">
+      <div>
+        <h3 class="mobile-picker-title">实时寄养状态</h3>
+        <div style="font-size:11px;color:#64748b;margin-top:2px;">${escapeHtml(order.code)}</div>
+      </div>
+      <button class="mobile-picker-close" aria-label="关闭">✕</button>
+    </div>
+    <div class="breeding-sheet-body">
+      <div class="breeding-overview">
+        <div class="breeding-overview__item">
+          <span class="breeding-overview__label">入场办理日</span>
+          <span class="breeding-overview__value">${feeding.entryAt || order.createdAt}</span>
+        </div>
+        <div class="breeding-overview__item">
+          <span class="breeding-overview__label">拟养天数</span>
+          <span class="breeding-overview__value">${order.feedDays || feeding.feedDays || 14} 天</span>
+        </div>
+        <div class="breeding-overview__item">
+          <span class="breeding-overview__label">当前规模</span>
+          <span class="breeding-overview__value">${feeding.cageIds.length} 笼 · 共 ${feeding.quantity} 只</span>
+        </div>
+      </div>
+
+      <div class="breeding-section">
+        <div class="breeding-section__title">每笼在养数量</div>
+        ${cageRows || '<div class="breeding-empty">暂无笼位信息</div>'}
+      </div>
+
+      <div class="breeding-section">
+        <div class="breeding-section__title">笼位变更流水${feeding.changeLogs?.length ? `（${feeding.changeLogs.length} 次）` : ''}</div>
+        ${changeLogs || '<div class="breeding-empty">暂无变更记录，日常屏障巡房管护中</div>'}
+      </div>
+    </div>
+  `
+
+  container.appendChild(mask)
+  container.appendChild(sheet)
+
+  requestAnimationFrame(() => {
+    mask.classList.add('is-open')
+    sheet.classList.add('is-open')
+  })
+
+  function close(): void {
+    mask.classList.remove('is-open')
+    sheet.classList.remove('is-open')
+    setTimeout(() => {
+      mask.remove()
+      sheet.remove()
+    }, 280)
+  }
+
+  mask.addEventListener('click', close)
+  sheet.querySelector('.mobile-picker-close')?.addEventListener('click', close)
 }
 

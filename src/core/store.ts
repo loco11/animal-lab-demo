@@ -43,6 +43,8 @@ export function setState(mutator: (prev: AppState) => AppState): void {
   state = next
   persist()
   notify()
+  // 跨窗口/标签页广播：教师端（其他上下文）实时感知学生端取号等变更
+  syncChannel?.postMessage(state)
 }
 
 export function notify(): void {
@@ -63,4 +65,40 @@ export function resetState(): void {
 export function scopeLabId(): string | null {
   const s = state
   return s.wholeSchool ? null : s.currentLabId
+}
+
+/* 跨标签页/窗口同步：学生端取号后，教师端标签页实时感知并弹窗 */
+function applyIncoming(incoming: AppState): void {
+  // 仅同步业务数据，保留本标签页的身份与实验室上下文
+  state = {
+    ...incoming,
+    currentUserId: state.currentUserId,
+    currentLabId: state.currentLabId,
+    wholeSchool: state.wholeSchool,
+  }
+  notify()
+}
+
+let syncChannel: BroadcastChannel | null = null
+if (typeof window !== 'undefined') {
+  // 优先使用 BroadcastChannel：同源多窗口/iframe 实时广播，不依赖 localStorage 写入
+  if ('BroadcastChannel' in window) {
+    syncChannel = new BroadcastChannel('lab-demo-sync')
+    syncChannel.addEventListener('message', (e) => {
+      try {
+        applyIncoming(e.data as AppState)
+      } catch {
+        /* 忽略解析失败 */
+      }
+    })
+  }
+  // storage 事件兜底：BroadcastChannel 不可用或跨浏览器场景
+  window.addEventListener('storage', (e) => {
+    if (e.key !== STORAGE_KEY || !e.newValue) return
+    try {
+      applyIncoming(JSON.parse(e.newValue) as AppState)
+    } catch {
+      /* 忽略解析失败 */
+    }
+  })
 }

@@ -1,14 +1,16 @@
 /** 笼位空间看板：分校区楼栋、分楼层、分房间物理空间感知，机架网格化直观展示空闲与在养状态，与笼位台账双向联动 */
 
+import { listReservationsOf } from '../core/biz/feeding'
 import { data, scoped } from '../core/data'
-import { daysBetween, escapeHtml, todayStr } from '../core/utils'
+import { addDays, daysBetween, escapeHtml, todayStr } from '../core/utils'
 import type { Cage, CageOccupancy, Feeding, Order } from '../types'
 import type { PageDef } from '../router'
 import { currentQuery, navigate, rerender } from '../router'
-import { el, openDialog, tagHtml, toast } from '../ui'
-import { detailGrid, pageShell } from '../ui/form'
+import { el, openDrawer, tagHtml, toast } from '../ui'
+import { pageShell } from '../ui/form'
 import { showResult } from './common'
 import { setCageStatus } from './cage'
+import { openCageChange, openExit, renderIncomingTable } from './feeding'
 
 interface ViewState {
   building: string
@@ -427,13 +429,20 @@ function renderCageCard(cage: Cage, isFocused = false, searchKeyword = ''): HTML
       ? '#0284c7'
       : isReserved
         ? '#eab308'
-        : isCleaning
-          ? '#0ea5e9'
-          : '#94a3b8'
+        : '#94a3b8'
 
   const indicator = el('div')
   indicator.style.cssText = `position:absolute;left:0;top:0;bottom:0;width:4px;background:${indicatorColor};`
   card.appendChild(indicator)
+
+  // 有排队预约的笼位：右上角紫色角标高亮
+  const queueCount = listReservationsOf(cage.id).length
+  if (isOccupied && queueCount > 0) {
+    const queueBadge = el('div')
+    queueBadge.style.cssText = `position:absolute;top:0;right:0;background:#7c3aed;color:#fff;font-size:10px;padding:2px 6px;border-radius:0 6px 0 8px;font-weight:600;z-index:2;`
+    queueBadge.textContent = `排队 ${queueCount}`
+    card.appendChild(queueBadge)
+  }
 
   let contentHtml = ''
 
@@ -531,6 +540,20 @@ function renderCageCard(cage: Cage, isFocused = false, searchKeyword = ''): HTML
   return card
 }
 
+/** 抽屉内档案信息表：字段 / 值两列 */
+function infoTable(title: string, items: [string, string][]): string {
+  return `
+    <section class="drawer-section">
+      <h3 class="drawer-section-title">${escapeHtml(title)}</h3>
+      <div class="table-wrap info-table">
+        <table><tbody>
+          ${items.map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${v}</td></tr>`).join('')}
+        </tbody></table>
+      </div>
+    </section>
+  `
+}
+
 function openCageDetailModal(
   cage: Cage,
   occ?: CageOccupancy,
@@ -545,13 +568,10 @@ function openCageDetailModal(
 
   const locationDesc = `${cage.building || '云漫湖校区实验楼'} ➔ ${cage.floor || '1F'} ➔ ${cage.room} ➔ ${cage.rack || '默认机架'}`
 
-  const items: [string, string][] = [
+  const baseItems: [string, string][] = [
     ['笼位编号', `<strong>${escapeHtml(cage.code)}</strong>`],
     ['物理坐标', locationDesc],
-    ['所在房间', cage.room],
-    ['所在机架', cage.rack || '01号IVC小鼠笼架'],
     ['环境等级', cage.env === 'SPF' ? tagHtml('SPF级屏障环境（IVC独立送排风）', 'success') : tagHtml('普通环境', 'default')],
-    ['容纳标准', `${cage.capacity} 只/笼`],
     [
       '当前状态',
       isOccupied
@@ -564,35 +584,61 @@ function openCageDetailModal(
     ],
   ]
 
+  const raiseItems: [string, string][] = []
+
   if (isOccupied && feeding) {
     const days = occ?.start ? Math.max(1, daysBetween(occ.start, todayStr())) : 1
     const cost = days * 10
-    items.push(['入场日期', occ?.start || '—'])
-    items.push(['在架天数', `<strong>${days}</strong> 天`])
-    items.push(['入驻课题组/人员', `<strong>${escapeHtml(order?.applicantName || '—')}</strong>`])
-    items.push(['在养动物品系', `${escapeHtml(feeding.animalName)} (${feeding.quantity}只)`])
-    items.push(['计费标准', '¥10.00 / 笼·天'])
-    items.push(['累计预估饲养费', `<span style="color:#b91c1c;font-weight:700;">¥${cost.toFixed(2)}</span>`])
-    items.push(['关联出库/饲养单', `<code>${order?.code || feeding.id}</code>`])
+    const feedDays = feeding.feedDays ?? 14
+    const releaseDate = occ?.start ? addDays(occ.start, feedDays) : '—'
+    const remain = feedDays - days
+    const remainText =
+      remain >= 0 ? `剩余 <strong>${remain}</strong> 天` : `<span style="color:#b91c1c;">已超期 <strong>${-remain}</strong> 天</span>`
+    const cageCountText =
+      feeding.cageIds
+        .map((id) => {
+          const count = feeding.cageCounts?.[id]
+          const code = data().cages.find((c) => c.id === id)?.code || id
+          return count != null && count > 0 ? `${code}（${count}只）` : code
+        })
+        .join('、') || '—'
+    raiseItems.push(['在养笼位', cageCountText])
+    raiseItems.push(['预计释放时间', `<strong style="color:#d97706;">${releaseDate}</strong>（${remainText}）`])
+    raiseItems.push(['入场日期', occ?.start || '—'])
+    raiseItems.push(['入驻课题组/人员', `<strong>${escapeHtml(order?.applicantName || '—')}</strong>`])
+    raiseItems.push(['在养动物品系', `${escapeHtml(feeding.animalName)} (${feeding.quantity}只)`])
+    raiseItems.push(['累计预估饲养费', `<span style="color:#b91c1c;font-weight:700;">¥${cost.toFixed(2)}</span>`])
+    raiseItems.push(['关联饲养单', `<code>${order?.code || feeding.id}</code>`])
   } else if (isReserved) {
-    items.push(['预留课题组/人员', `<strong>${escapeHtml(resOrder?.applicantName || '—')}</strong>`])
-    items.push(['拟入住区间', `${resOrder?.expectStartDate || '—'} 至 ${resOrder?.expectEndDate || '—'}`])
-    items.push(['2天保留截止时间', `<strong style="color:#d97706;">${resOrder?.reserveExpireAt || '—'} 23:59</strong>`])
-    items.push(['保留风控说明', '自拟入场日起超期 2 天未办理入住，系统将自动释放'])
-    items.push(['关联申请单', `<code>${resOrder?.code || '—'}</code>`])
+    raiseItems.push(['在养状态', '<span style="color:#94a3b8;">当前无在养（已预分配锁定）</span>'])
+    raiseItems.push(['预留课题组/人员', `<strong>${escapeHtml(resOrder?.applicantName || '—')}</strong>`])
+    raiseItems.push(['拟入住区间', `${resOrder?.expectStartDate || '—'} 至 ${resOrder?.expectEndDate || '—'}`])
+    raiseItems.push(['2天保留截止时间', `<strong style="color:#d97706;">${resOrder?.reserveExpireAt || '—'} 23:59</strong>`])
+    raiseItems.push(['关联申请单', `<code>${resOrder?.code || '—'}</code>`])
   } else if (isDisabled) {
-    items.push(['停用原因/说明', cage.note || '设备例行维护与消毒'])
+    raiseItems.push(['在养状态', '<span style="color:#94a3b8;">当前无在养（维护停用/待消杀）</span>'])
+    raiseItems.push(['停用说明', cage.note || '设备例行维护与消毒'])
+  } else {
+    raiseItems.push(['在养状态', '<span style="color:#94a3b8;">当前无在养（空闲可用）</span>'])
   }
 
-  const grid = detailGrid(items, 3)
+  let drawer: ReturnType<typeof openDrawer> | undefined
 
   const actions = []
   if (isOccupied) {
     actions.push({
-      text: '📋 前往饲养管理（办理退场/领用）',
-      primary: true,
+      text: '笼位变更',
+      keepOpen: true,
       onClick: () => {
-        navigate('/feeding')
+        if (feeding) openCageChange(feeding, () => { drawer?.close(); rerender() })
+      },
+    })
+    actions.push({
+      text: '办理退场',
+      primary: true,
+      keepOpen: true,
+      onClick: () => {
+        if (feeding) openExit(feeding, () => { drawer?.close(); rerender() })
       },
     })
   } else if (isReserved) {
@@ -604,13 +650,6 @@ function openCageDetailModal(
       },
     })
   } else if (isFree) {
-    actions.push({
-      text: '➕ 前往待入场排位',
-      primary: true,
-      onClick: () => {
-        navigate('/feeding')
-      },
-    })
     actions.push({
       text: '🔧 标记停用/维护',
       onClick: () => {
@@ -631,57 +670,48 @@ function openCageDetailModal(
 
   actions.push({ text: '关闭', onClick: () => {} })
 
-  const dlg = openDialog({
+  drawer = openDrawer({
     title: `笼位空间档案：${cage.code}（${isOccupied ? '在养占用' : isReserved ? '预分配锁定' : isFree ? '空闲可用' : '维护停用'}）`,
-    bodyHtml: '',
-    wide: true,
     actions,
   })
 
-  const body = dlg.querySelector('.dlg__body') as HTMLElement
-  grid.style.margin = '0 0 16px'
-  body.appendChild(grid)
+  const body = drawer.body
+  const exitTip =
+    isOccupied && feeding
+      ? `<div class="drawer-tip">退场将释放本订单全部 <strong>${feeding.cageIds.length}</strong> 个笼位（含当前笼位 ${escapeHtml(cage.code)}），请确认后操作</div>`
+      : ''
+  body.innerHTML = `${infoTable('笼位档案', baseItems)}${infoTable('在养情况', raiseItems)}${exitTip}`
 
-  // 历史占用流水
-  const historyList = data()
-    .occupancies.filter((o) => o.cageId === cage.id)
-    .sort((a, b) => (a.start < b.start ? 1 : -1))
+  // 第三部分：待入场列表（统一展示；在养/锁定笼位以演示提示体现「排未来笼位」）
+  const incomingSection = el('section', 'drawer-section')
+  incomingSection.innerHTML = `<h3 class="drawer-section-title">待入场列表</h3>`
+  body.appendChild(incomingSection)
 
-  if (historyList.length) {
-    const histWrap = el('div')
-    histWrap.innerHTML = `
-      <div style="font-size:13px;font-weight:700;color:var(--c-title);margin-bottom:8px;">该笼位历史占用与流转记录</div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>入场日期</th>
-              <th>结束日期</th>
-              <th>使用单据</th>
-              <th>变动原因</th>
-              <th>操作实验师</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${historyList
-              .map((h) => {
-                const f = data().feedings.find((feed) => feed.id === h.feedingId)
-                const ord = f ? data().orders.find((o) => o.id === f.orderId) : undefined
-                return `
-                <tr>
-                  <td>${h.start}</td>
-                  <td>${h.end ? h.end : '<span style="color:#0284c7;font-weight:600;">在养占用中</span>'}</td>
-                  <td>${ord?.code || f?.id || '—'}</td>
-                  <td>${h.reason}</td>
-                  <td>${h.operator}</td>
-                </tr>
-              `
-              })
-              .join('')}
-          </tbody>
-        </table>
-      </div>
-    `
-    body.appendChild(histWrap)
+  if (isOccupied) {
+    const feedDays = feeding?.feedDays ?? 14
+    const releaseDate = occ?.start ? addDays(occ.start, feedDays) : '—'
+    const tip = el('div', 'drawer-tip')
+    tip.innerHTML = `该笼位当前<strong>在养中</strong>，预计 <strong style="color:#d97706;">${releaseDate}</strong> 释放，可排该日期之后的未来笼位（演示）`
+    incomingSection.appendChild(tip)
+  } else if (isReserved) {
+    const tip = el('div', 'drawer-tip')
+    tip.innerHTML = `该笼位已预分配锁定（保留至 <strong>${resOrder?.reserveExpireAt || '—'}</strong>），可排其入场结束之后的未来笼位（演示）`
+    incomingSection.appendChild(tip)
+  } else if (isDisabled) {
+    const tip = el('div', 'drawer-tip')
+    tip.innerHTML = '该笼位停用/消杀中，暂不可排位'
+    incomingSection.appendChild(tip)
   }
+
+  const incomingHost = el('div')
+  incomingSection.appendChild(incomingHost)
+  const renderList = () => {
+    incomingHost.innerHTML = ''
+    renderIncomingTable(incomingHost, isFree ? cage.id : undefined, () => {
+      renderList()
+    })
+  }
+  renderList()
+
+
 }

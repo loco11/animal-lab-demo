@@ -75,6 +75,8 @@ export interface Service {
   /** 单价快照来源：订单确认（订购）或入场（饲养）时取值 */
   unitPriceFen: number
   auditMode: AuditMode
+  /** 是否需要填写伦理审批编号（IACUC）：需填写时，申请人须提交学校下发的批件号 */
+  iacucRequired: boolean
   onSale: boolean
   applyNote: string
   updatedAt: string
@@ -130,6 +132,12 @@ export interface Order {
   /** 校内申请人（使用端），与使用端操作员、外部客户分别记录 */
   applicantName: string
   applicantOrg: string
+  /** 学工号（学号 / 工号） */
+  applicantNo?: string
+  /** 联系电话 */
+  applicantPhone?: string
+  /** 申请人所属学院 */
+  college?: string
   /** 外购订单：外部个人或单位，不登录系统 */
   externalCustomerId?: string
   /** 外购订单：管理员已确认的发生金额（分） */
@@ -281,12 +289,14 @@ export interface SupplierItem {
 export interface PurchaseBatch {
   id: string
   labId: string
-  supplierId: string
+  /** 跨供应商：一个批次可包含多个供应商 */
+  supplierIds: string[]
   orderIds: string[]
-  status: 'draft' | 'sent'
+  /** 生成即已发送（无草稿中间态） */
+  status: 'sent'
   operator: string
   createdAt: string
-  sentAt?: string
+  sentAt: string
 }
 
 export type AnomalyType = 'short' | 'dead' | 'other'
@@ -347,6 +357,16 @@ export interface CageOccupancy {
   createdAt: string
 }
 
+/** 占用中笼位的排队预约：等待当前订单退场后自动接续锁定 */
+export interface CageReservation {
+  id: string
+  labId: string
+  cageId: string
+  orderId: string
+  operator: string
+  createdAt: string
+}
+
 export type FeedingStatus = 'incoming' | 'breeding' | 'exited'
 
 export interface FeedingChangeLog {
@@ -367,11 +387,15 @@ export interface Feeding {
   quantity: number
   /** 入场价格快照：每笼每天（分） */
   unitPriceFen: number
+  /** 拟饲养天数快照：入场时从订单锁定，避免订单后续调整影响历史 */
+  feedDays?: number
   status: FeedingStatus
   entryAt?: string
   exitAt?: string
   exitReason?: string
   cageIds: string[]
+  /** 每笼在养数量：笼位ID → 动物数量（统一每笼上限 5 只；数量 0 表示释放该笼） */
+  cageCounts?: Record<string, number>
   changeLogs?: FeedingChangeLog[]
 }
 
@@ -379,13 +403,32 @@ export interface Feeding {
 
 export type SettleChannel = 'internal' | 'external'
 
+export type ProjectStatus = 'active' | 'ended' | 'paused'
+
 export interface Project {
   id: string
   labId: string
   code: string
   name: string
   owner: string
-  enabled: boolean
+  /** 经费来源 */
+  fundSource: string
+  /** 经费总额（分） */
+  totalBudgetFen: number
+  /** 已划扣金额（分）：已完成交付实际扣减 */
+  spentFen: number
+  status: ProjectStatus
+}
+
+/** 项目组成员：项目负责人授权的可申用该项目经费的人员名单 */
+export interface ProjectMember {
+  id: string
+  labId: string
+  projectId: string
+  name: string
+  no: string
+  org: string
+  createdAt: string
 }
 
 export interface Fee {
@@ -441,6 +484,24 @@ export interface AuditLog {
   refId: string
 }
 
+/** 现场取号记录：学生到窗口/屏障区取号，教师端右下角弹窗提醒 */
+export interface ServiceCall {
+  id: string
+  labId: string
+  orderId: string
+  /** 取号序号 */
+  seq: number
+  name: string
+  no: string
+  org: string
+  orderCode: string
+  orderKind: OrderKind
+  /** 办理类型：出库 / 入住 */
+  biz: 'outstock' | 'entry'
+  createdAt: string
+  status: 'waiting' | 'called' | 'done' | 'released'
+}
+
 export interface DemoSettings {
   /** 接口调试选项：仅用于演示三种模拟结果，标明为模拟 */
   chargeOutcome: 'success' | 'failed' | 'unknown'
@@ -466,8 +527,11 @@ export interface DemoData {
   anomalies: PurchaseAnomaly[]
   cages: Cage[]
   occupancies: CageOccupancy[]
+  reservations: CageReservation[]
   feedings: Feeding[]
   projects: Project[]
+  projectMembers: ProjectMember[]
+  serviceCalls: ServiceCall[]
   fees: Fee[]
   chargeRequests: ChargeRequest[]
   logs: AuditLog[]

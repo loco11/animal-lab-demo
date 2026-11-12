@@ -239,10 +239,14 @@
 }
 
 .service-clean-kind-badge {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
   font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  letter-spacing: 0.2px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
 .badge-kind-internal {
@@ -886,6 +890,77 @@
   box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
 }
 
+/* 筛选行：服务类型胶囊 Tab（默认展示）+ 最右侧状态下拉 */
+.orders-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 6px; /* 预留选中胶囊下方小三角指示器的空间 */
+}
+
+.orders-kind-tabs {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.orders-kind-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.orders-kind-tab {
+  position: relative;
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #475569;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
+  transition: all 0.15s ease;
+}
+
+.orders-kind-tab:active {
+  transform: scale(0.97);
+}
+
+.orders-kind-tab.is-active {
+  background: #2b7cff;
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 4px 10px rgba(43, 124, 255, 0.3);
+}
+
+/* 选中态下方的小三角指示器 */
+.orders-kind-tab.is-active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid #2b7cff;
+}
+
+/* 最右侧状态筛选：紧凑白色胶囊下拉 */
+.mobile-picker-trigger.orders-status-trigger {
+  width: auto;
+  flex-shrink: 0;
+  height: 35px;
+  border-radius: 999px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
+}
+
 .orders-list {
   display: flex;
   flex-direction: column;
@@ -896,21 +971,101 @@
   background: #ffffff;
   border-radius: var(--app-radius-lg);
   padding: 16px;
-  box-shadow: var(--app-shadow);
-  border: 1px solid #f1f5f9;
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.04);
+  border: 1px solid #eef2f6;
   cursor: pointer;
   transition: all 0.15s ease;
 }
 
 .order-item-card:hover {
   border-color: #cbd5e1;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.07);
+}
+
+.order-item-card:active {
+  transform: scale(0.99);
 }
 
 .order-item-card__head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 8px;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.order-item-card__heading {
+  min-width: 0;
+}
+
+.order-item-card__subtitle {
+  font-size: 11.5px;
+  color: #94a3b8;
+}
+
+/* 右侧状态：语义色圆点 + 状态名称（参考首页服务卡片「● 实验动物中心」样式） */
+.order-status-dot {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #64748b;
+  white-space: nowrap;
+}
+
+.order-status-dot__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #94a3b8;
+}
+
+.order-status-dot--pending .order-status-dot__dot {
+  background: #f59e0b;
+}
+
+.order-status-dot--processing .order-status-dot__dot {
+  background: #2563eb;
+}
+
+.order-status-dot--done .order-status-dot__dot {
+  background: #16a34a;
+}
+
+/* 浅灰嵌套信息面板：灰标签 + 深色值 两列键值对 */
+.order-item-card__panel {
+  background: #f6f8fb;
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.order-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.order-kv__label {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.order-kv__value {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+  line-height: 1.4;
+  word-break: break-all;
 }
 
 .order-item-card__code {
@@ -921,10 +1076,14 @@
 }
 
 .order-status-pill {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
   font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  letter-spacing: 0.2px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
 .order-status-pill--pending {
@@ -966,10 +1125,40 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-top: 1px dashed #e2e8f0;
-  padding-top: 10px;
-  font-size: 11px;
-  color: #94a3b8;
+  gap: 8px;
+}
+
+.order-detail-toggle {
+  display: inline-flex;
+  align-items: center;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.take-num-btn {
+  flex-shrink: 0;
+  padding: 7px 16px;
+  border: none;
+  border-radius: 999px;
+  background: #10b981;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(16, 185, 129, 0.25);
+  transition: all 0.15s ease;
+}
+.take-num-btn:hover {
+  background: #059669;
+  box-shadow: 0 4px 10px rgba(16, 185, 129, 0.35);
+}
+.take-num-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 3px rgba(16, 185, 129, 0.3);
 }
 
 .order-timeline-box {
@@ -1508,6 +1697,191 @@
   color: #166534;
   opacity: 0.88;
   margin-top: 2px;
+}
+
+/* ==========================================================================
+   饲养寄养「实时寄养状态」：卡片摘要 + 底部抽屉弹层
+   ========================================================================== */
+
+/* 信息面板跨列摘要行 */
+.order-kv--full {
+  grid-column: 1 / -1;
+}
+
+.order-kv__value--strong {
+  color: #7e22ce;
+  font-weight: 700;
+}
+
+/* 底部操作区右侧按钮组 */
+.order-item-card__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 「实时寄养状态」入口按钮 */
+.breeding-status-btn {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border: 1px solid #7e22ce;
+  border-radius: 999px;
+  background: #faf5ff;
+  color: #7e22ce;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.4;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(126, 34, 206, 0.14);
+  transition: all 0.15s ease;
+}
+
+.breeding-status-btn:hover {
+  background: #7e22ce;
+  color: #ffffff;
+}
+
+/* 弹层滚动主体 */
+.breeding-sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 18px 24px 18px;
+}
+
+/* 顶部概览：三列键值 */
+.breeding-overview {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 12px 14px;
+  background: #f6f8fb;
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.breeding-overview__item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.breeding-overview__label {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.breeding-overview__value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+/* 分区 */
+.breeding-section {
+  margin-bottom: 16px;
+}
+
+.breeding-section:last-child {
+  margin-bottom: 0;
+}
+
+.breeding-section__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+/* 每笼在养数量行 */
+.breeding-cage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #ffffff;
+  border: 1px solid #eef2f6;
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+
+.breeding-cage-row:last-child {
+  margin-bottom: 0;
+}
+
+.breeding-cage-row__left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.breeding-cage-row__code {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.breeding-cage-row__meta {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.breeding-cage-row__count {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #7e22ce;
+}
+
+/* 变更流水条目 */
+.breeding-log-item {
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #eef2f6;
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+
+.breeding-log-item:last-child {
+  margin-bottom: 0;
+}
+
+.breeding-log-item__head {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.breeding-log-item__body {
+  font-size: 11.5px;
+  color: #475569;
+  margin-top: 3px;
+}
+
+.breeding-log-item__note {
+  font-size: 11.5px;
+  color: #64748b;
+  margin-top: 3px;
+  line-height: 1.5;
+}
+
+.breeding-log-item__op {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 3px;
+}
+
+.breeding-empty {
+  font-size: 12px;
+  color: #94a3b8;
+  padding: 8px 0;
 }
 
 

@@ -1,9 +1,9 @@
 /** 笼位管理：台账、空间维度、状态筛选、占用详情、看板联动与变更历史 */
 
-import { occupanciesOf, listCages, supplyUsagesOf, completeCageCleaning } from '../core/biz/feeding'
+import { occupanciesOf, listCages, supplyUsagesOf } from '../core/biz/feeding'
 import { data, log, scoped, updateData } from '../core/data'
 import { assertAction } from '../core/auth'
-import { escapeHtml, uid } from '../core/utils'
+import { downloadCSV, escapeHtml, todayStr, uid } from '../core/utils'
 import type { Cage } from '../types'
 import type { PageDef } from '../router'
 import { currentPath, currentQuery, navigate, rerender } from '../router'
@@ -42,9 +42,9 @@ export const cagePage: PageDef = {
       page,
       [
         { key: 'all', text: '全部笼位', count: cages.length },
-        { key: 'free', text: '🟢 空闲可用', count: cages.filter((c) => c.status === 'free').length },
-        { key: 'reserved', text: '🟡 预分配锁定', count: cages.filter((c) => c.status === 'reserved').length },
-        { key: 'occupied', text: '🟣 在养使用', count: cages.filter((c) => c.status === 'occupied').length },
+        { key: 'free', text: '空闲可用', count: cages.filter((c) => c.status === 'free').length },
+        { key: 'reserved', text: '预分配锁定', count: cages.filter((c) => c.status === 'reserved').length },
+        { key: 'occupied', text: '在养使用', count: cages.filter((c) => c.status === 'occupied').length },
         { key: 'disabled', text: '⚪ 维护停用', count: cages.filter((c) => c.status === 'disabled').length },
       ],
       view.tab,
@@ -113,19 +113,21 @@ export const cagePage: PageDef = {
     toolbar.innerHTML = `
       <div style="font-size:12px;color:var(--c-desc);display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
         <span>筛选结果：共 <strong>${filtered.length}</strong> 笼</span>
-        <span style="color:var(--c-success);">🟢 空闲: <strong>${freeCount}</strong></span>
-        <span style="color:#d97706;">🟡 预分配: <strong>${resCount}</strong></span>
-        <span style="color:#0284c7;">🟣 在养: <strong>${occCount}</strong></span>
+        <span style="color:var(--c-success);">空闲: <strong>${freeCount}</strong></span>
+        <span style="color:#d97706;">预分配: <strong>${resCount}</strong></span>
+        <span style="color:#0284c7;">在养: <strong>${occCount}</strong></span>
       </div>
       <div class="toolbar__actions">
         <button class="btn btn-primary" data-act="create">新增笼位</button>
         <button class="btn btn-default" data-act="board">笼位空间看板</button>
+        <button class="btn btn-default" data-act="export">导出数据</button>
       </div>
     `
     toolbar.querySelector('button[data-act="create"]')?.addEventListener('click', () => {
       runGuarded('cage:edit', () => openCreateCage())
     })
     toolbar.querySelector('button[data-act="board"]')?.addEventListener('click', () => navigate('/cage/board'))
+    toolbar.querySelector('button[data-act="export"]')?.addEventListener('click', () => exportCages(filtered))
 
     const tableHost = el('div', 'panel panel-table')
     tableHost.appendChild(toolbar)
@@ -145,13 +147,13 @@ export const cagePage: PageDef = {
             render: (r) => {
               const b = r.building || '云漫湖校区·实验动物中心（SPF屏障实验楼）'
               const short = b.includes('云漫湖') ? '云漫湖校区·SPF实验楼' : '北京路校区·老校区动物楼'
-              return `<span title="${escapeHtml(b)}" style="display:flex;align-items:center;gap:4px;font-size:12px;">🏢 ${escapeHtml(short)}</span>`
+              return `<span title="${escapeHtml(b)}" style="font-size:12px;">${escapeHtml(short)}</span>`
             },
           },
           {
             key: 'rack',
             title: '所在机架',
-            render: (r) => `<span style="font-size:12px;color:#334155;font-weight:500;">🎛️ ${escapeHtml(r.rack || '默认机架')}</span>`,
+            render: (r) => `<span style="font-size:12px;color:#334155;font-weight:500;">${escapeHtml(r.rack || '默认机架')}</span>`,
           },
           { key: 'room', title: '所在房间' },
           {
@@ -180,7 +182,7 @@ export const cagePage: PageDef = {
         rows: filtered,
         actions: (row) =>
           [
-            { text: '🎯 看板定位', act: 'locate' },
+            { text: '看板定位', act: 'locate' },
             { text: '占用历史', act: 'history' },
             row.status === 'disabled' ? { text: '启用', act: 'enable' } : null,
             row.status !== 'occupied' && row.status !== 'disabled' ? { text: '停用', act: 'disable', danger: true } : null,
@@ -214,12 +216,40 @@ function filterRows(): Cage[] {
   return list
 }
 
+function exportCages(rows: Cage[]): void {
+  if (!rows.length) {
+    toast('当前列表没有可导出的数据', 'error')
+    return
+  }
+  const statusText = (s: Cage['status']) =>
+    s === 'occupied' ? '在养使用' : s === 'reserved' ? '预分配锁定' : s === 'free' ? '空闲可用' : '维护停用'
+  const buildingText = (b?: string) => {
+    const full = b || '云漫湖校区·实验动物中心（SPF屏障实验楼）'
+    return full.includes('云漫湖') ? '云漫湖校区·SPF实验楼' : '北京路校区·老校区动物楼'
+  }
+  downloadCSV(
+    `笼位台账_${todayStr()}.csv`,
+    ['笼位编号', '物理校区 / 楼栋', '所在机架', '所在房间', '环境等级', '容纳标准', '当前状态', '备注'],
+    rows.map((r) => [
+      r.code,
+      buildingText(r.building),
+      r.rack || '默认机架',
+      r.room,
+      r.env === 'SPF' ? 'SPF独立通风' : '普通环境',
+      `${r.capacity} 只/笼`,
+      statusText(r.status),
+      r.note ?? '—',
+    ]),
+  )
+  toast(`已导出 ${rows.length} 条`, 'success')
+}
+
 function currentUsageDetail(cageId: string): string {
   const cage = data().cages.find((c) => c.id === cageId)
   if (cage?.status === 'reserved') {
     const resOcc = data().occupancies.find((o) => o.cageId === cageId && o.type === 'reserve')
     const resOrder = resOcc ? data().orders.find((o) => o.id === resOcc.orderId) : undefined
-    return `<span style="font-size:12px;color:#854d0e;font-weight:600;">🔒 已预留给 ${escapeHtml(resOrder?.applicantName || '课题组')}</span> <span style="font-size:11px;color:#64748b;">(保留至 ${resOrder?.reserveExpireAt || '—'})</span>`
+    return `<span style="font-size:12px;color:#854d0e;font-weight:600;">已预留给 ${escapeHtml(resOrder?.applicantName || '课题组')}</span> <span style="font-size:11px;color:#64748b;">(保留至 ${resOrder?.reserveExpireAt || '—'})</span>`
   }
 
   const occ = data().occupancies.find((o) => o.cageId === cageId && o.end === null)
@@ -228,7 +258,7 @@ function currentUsageDetail(cageId: string): string {
   const order = data().orders.find((o) => o.id === feeding?.orderId)
   if (!feeding && !order) return '<span style="color:#0284c7;font-weight:600;">已入驻占用</span>'
 
-  const applicant = order?.applicantName ? `👤 ${escapeHtml(order.applicantName)}` : '在养'
+  const applicant = order?.applicantName ? escapeHtml(order.applicantName) : '在养'
   const strain = feeding?.animalName ? ` · ${escapeHtml(feeding.animalName)}` : ''
   const count = feeding?.quantity ? `(${feeding.quantity}只)` : ''
   const orderCode = order ? ` [${escapeHtml(order.code)}]` : ''

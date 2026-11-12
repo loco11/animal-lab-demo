@@ -14,10 +14,10 @@ import {
 import type { Supplier, SupplierItem } from '../types'
 import type { PageDef } from '../router'
 import { rerender } from '../router'
-import { confirmDialog, el, openDialog, renderTable, tagHtml, type RowAction } from '../ui'
+import { confirmDialog, el, openDialog, renderTable, tagHtml, toast, type RowAction } from '../ui'
 import { formDialog, pageShell } from '../ui/form'
 import { buildQuery, runGuarded, showResult } from './common'
-import { escapeHtml, moneyText } from '../core/utils'
+import { downloadCSV, escapeHtml, moneyText, todayStr } from '../core/utils'
 
 const view = {
   filters: {} as Record<string, string>,
@@ -58,11 +58,13 @@ export const supplierPage: PageDef = {
     const tableHost = el('div', 'panel panel-table')
     const toolbar = el('div', 'toolbar')
     toolbar.innerHTML =
-      '<div class="toolbar__actions"><button class="btn btn-primary" data-act="create">新增供应商</button></div>' +
+      '<div class="toolbar__actions"><button class="btn btn-primary" data-act="create">新增供应商</button>' +
+      '<button class="btn btn-default" data-act="export">导出数据</button></div>' +
       '<span class="hint">一个供应商可添加多个供应条目；条目编码由系统生成，名称可重复</span>'
     toolbar.querySelector('button[data-act="create"]')?.addEventListener('click', () =>
       runGuarded('supplier:edit', () => openCreateSupplier()),
     )
+    toolbar.querySelector('button[data-act="export"]')?.addEventListener('click', () => exportSuppliers())
     tableHost.appendChild(toolbar)
 
     renderTable<Supplier>(
@@ -118,6 +120,27 @@ function filteredSuppliers(): Supplier[] {
   if (status === 'enabled') list = list.filter((s) => s.enabled)
   if (status === 'disabled') list = list.filter((s) => !s.enabled)
   return list
+}
+
+function exportSuppliers(): void {
+  const rows = filteredSuppliers()
+  if (!rows.length) {
+    toast('当前列表没有可导出的数据', 'error')
+    return
+  }
+  downloadCSV(
+    `供应商台账_${todayStr()}.csv`,
+    ['供应商名称', '供应条目数', '联系人', '联系电话', '备注', '状态'],
+    rows.map((s) => [
+      s.name,
+      String(listSupplierItems(s.id).length),
+      s.contact,
+      s.phone,
+      s.note ?? '—',
+      s.enabled ? '启用' : '停用',
+    ]),
+  )
+  toast(`已导出 ${rows.length} 条`, 'success')
 }
 
 async function confirmDisable(supplier: Supplier): Promise<void> {

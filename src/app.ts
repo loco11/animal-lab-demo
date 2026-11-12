@@ -1,9 +1,13 @@
 /** 应用外壳：顶栏（实验室切换 / 身份 / 恢复数据 / 视图切换）+ 左侧菜单 + 内容区 */
 
-import { getCurrentUser, manageableLabs, switchLab, toggleWholeSchool, visibleGroups, users } from './core/auth'
+import { getCurrentUser, visibleGroups, users } from './core/auth'
+import { releaseCall } from './core/biz/serviceCall'
+import { data } from './core/data'
 import { getState, notify, resetState, subscribe } from './core/store'
 import { renderRoute, navigate, currentPath, routePath } from './router'
+import { escapeHtml } from './core/utils'
 import { confirmDialog, el, toast } from './ui'
+import type { ServiceCall } from './types'
 
 export function mountApp(root: HTMLElement): void {
   root.innerHTML = `
@@ -27,13 +31,6 @@ export function mountApp(root: HTMLElement): void {
         <div class="app-header__left">
           <div class="app-header__brand">
             <span style="color:#16529b;font-weight:700;margin-right:6px">贵州医科大学</span> · 实验动物综合业务管理系统
-            <span style="font-size:11px;font-weight:400;color:#64748b;margin-left:8px;background:#f1f5f9;padding:2px 8px;border-radius:3px">省工程技术中心</span>
-          </div>
-
-          <div class="app-header__views">
-            <button class="view-switch-btn" data-target="/hub">业务大纲</button>
-            <button class="view-switch-btn" data-target="/dashboard">PC 管理端</button>
-            <button class="view-switch-btn" data-target="/mobile">移动办事端</button>
           </div>
         </div>
 
@@ -85,55 +82,13 @@ export function mountApp(root: HTMLElement): void {
   /* ---------- 顶栏右侧内容 ---------- */
   function renderHeader(): void {
     const user = getCurrentUser()
-    const state = getState()
-    const userRecord = users().find((u) => u.id === user.id) ?? users()[0]
-    const labs = manageableLabs(userRecord)
     headerRight.innerHTML = ''
-
-    // 实验室切换
-    const labWrap = el('div', 'btn-group')
-    labWrap.innerHTML = '<span class="hint" style="font-size:12px;">当前中心</span>'
-    const labSel = el('select') as HTMLSelectElement
-    labSel.style.width = '160px'
-    labSel.disabled = state.wholeSchool || labs.length <= 1
-    labs.forEach((l) => {
-      const op = el('option', '', l.name) as HTMLOptionElement
-      op.value = l.id
-      if (l.id === state.currentLabId) op.selected = true
-      labSel.appendChild(op)
-    })
-    labSel.addEventListener('change', () => switchLab(labSel.value))
-    labWrap.appendChild(labSel)
-    headerRight.appendChild(labWrap)
-
-    // 全校视图（仅超级管理员，只读汇总）
-    if (user.isSuper) {
-      const ww = el('label', 'btn-group')
-      ww.style.gap = '4px'
-      const cb = el('input') as HTMLInputElement
-      cb.type = 'checkbox'
-      cb.checked = state.wholeSchool
-      cb.addEventListener('change', () => toggleWholeSchool(cb.checked))
-      ww.appendChild(cb)
-      ww.appendChild(el('span', 'hint', '全校汇总'))
-      headerRight.appendChild(ww)
-    }
 
     headerRight.appendChild(el('span', 'app-header__user', `${user.name}（${user.roleName}）`))
 
     const switchBtn = el('button', 'btn-text', '切换账号') as HTMLButtonElement
     switchBtn.addEventListener('click', () => navigate('/login'))
     headerRight.appendChild(switchBtn)
-
-    const resetBtn = el('button', 'btn-text', '重置数据') as HTMLButtonElement
-    resetBtn.style.color = '#64748b'
-    resetBtn.addEventListener('click', async () => {
-      const ok = await confirmDialog('重置演示数据', '将重置所有订单、出库、笼位与结算数据回到初始干净状态，确定继续？', '确定重置')
-      if (!ok) return
-      resetState()
-      toast('已恢复初始业务数据', 'success')
-    })
-    headerRight.appendChild(resetBtn)
   }
 
   function getNavIcon(path: string): string {
@@ -216,11 +171,110 @@ export function mountApp(root: HTMLElement): void {
   renderHeader()
   handleRoute()
 
-  window.addEventListener('hashchange', handleRoute)
+  window.addEventListener('hashchange', () => {
+    handleRoute()
+    renderCallQueue()
+  })
   subscribe(() => {
     renderHeader()
     handleRoute()
   })
+
+  /* ---------- 学生现场取号：教师端右下角折叠队列 ---------- */
+  const CALL_KIND_TEXT: Record<string, string> = {
+    internal: '自产动物出库',
+    external: '外购代采',
+    breeding: '饲养寄养入住',
+  }
+
+  const queueRoot = document.createElement('div')
+  queueRoot.className = 'call-queue-root'
+  document.body.appendChild(queueRoot)
+
+  let queueOpen = false
+
+  function pendingCalls(): ServiceCall[] {
+    return data().serviceCalls.filter((c) => c.status === 'waiting' || c.status === 'called')
+  }
+
+  function renderCallQueue(): void {
+    const path = routePath()
+    if (path === '/hub' || path === '/mobile' || path === '/login') {
+      queueRoot.style.display = 'none'
+      return
+    }
+    queueRoot.style.display = ''
+
+    const pending = pendingCalls()
+
+    queueRoot.innerHTML = `
+      <button class="call-fab" type="button" title="现场取号队列">
+        <span class="call-fab__icon">🔔</span>
+        <span class="call-fab__text">取号</span>
+        ${pending.length ? `<span class="call-fab__badge">${pending.length}</span>` : ''}
+      </button>
+      <div class="call-queue-panel${queueOpen ? ' is-open' : ''}">
+        <div class="call-queue-panel__head">
+          <span class="call-queue-panel__title">现场取号队列</span>
+          <span class="call-queue-panel__count">${pending.length} 人等待</span>
+        </div>
+        <div class="call-queue-panel__list">
+          ${
+            pending.length
+              ? pending
+                  .map(
+                    (call) => `
+              <div class="call-queue-card">
+                <div class="call-queue-card__head">
+                  <span class="call-queue-card__seq">#${String(call.seq).padStart(3, '0')}</span>
+                  <span class="call-queue-card__name">${escapeHtml(call.name)}</span>
+                </div>
+                <div class="call-queue-card__body">
+                  <div class="call-queue-card__row"><span>学工号</span><strong>${escapeHtml(call.no)}</strong></div>
+                  <div class="call-queue-card__row"><span>单位</span><strong>${escapeHtml(call.org)}</strong></div>
+                  <div class="call-queue-card__row"><span>订单编号</span><strong>${escapeHtml(call.orderCode)}</strong></div>
+                  <div class="call-queue-card__row"><span>订单类型</span><strong>${escapeHtml(CALL_KIND_TEXT[call.orderKind] ?? call.orderKind)}</strong></div>
+                </div>
+                <div class="call-queue-card__actions">
+                  <button class="btn btn-primary" data-call-act="goto" data-call-id="${call.id}">去办理</button>
+                  <button class="btn btn-default" data-call-act="release" data-call-id="${call.id}">忽略 / 释放</button>
+                </div>
+              </div>
+            `,
+                  )
+                  .join('')
+              : '<div class="call-queue-empty">暂无待处理的现场取号</div>'
+          }
+        </div>
+      </div>
+    `
+
+    queueRoot.querySelector('.call-fab')?.addEventListener('click', () => {
+      queueOpen = !queueOpen
+      renderCallQueue()
+    })
+
+    queueRoot.querySelectorAll<HTMLElement>('[data-call-act]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.callId
+        const act = btn.dataset.callAct
+        const call = data().serviceCalls.find((c) => c.id === id)
+        if (!call) return
+        if (act === 'release') {
+          releaseCall(call.id)
+          renderCallQueue()
+        } else if (act === 'goto') {
+          queueOpen = false
+          navigate(call.biz === 'outstock' ? '/order/internal' : '/feeding')
+        }
+      })
+    })
+  }
+
+  subscribe(renderCallQueue)
+  renderCallQueue()
+  // 兜底轮询：教师端每 3 秒刷新队列（无论跨窗口同步是否生效）
+  setInterval(renderCallQueue, 3000)
 
   // 首次进入默认落到 /hub
   const state = getState()

@@ -18,6 +18,7 @@ export interface ServiceInput {
   unit: string
   unitPriceFen: number
   auditMode: AuditMode
+  iacucRequired: boolean
   onSale: boolean
   applyNote: string
   stockItemId?: string
@@ -45,6 +46,7 @@ export function saveService(input: ServiceInput): OpResult {
               unit: input.unit.trim(),
               unitPriceFen: input.unitPriceFen,
               auditMode: input.auditMode,
+              iacucRequired: input.iacucRequired,
               onSale: input.onSale,
               applyNote: input.applyNote.trim(),
               stockItemId: input.stockItemId,
@@ -72,6 +74,7 @@ export function saveService(input: ServiceInput): OpResult {
         unit: input.unit.trim(),
         unitPriceFen: input.unitPriceFen,
         auditMode: input.auditMode,
+        iacucRequired: input.iacucRequired,
         onSale: input.onSale,
         applyNote: input.applyNote.trim(),
         stockItemId: input.stockItemId,

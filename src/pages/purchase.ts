@@ -1,18 +1,18 @@
-/** 外购汇总：把外购订单按供应商分开，每个供应商内按品系汇总数量，导出 CSV 发供应商 */
+/** 外购汇总：未处理按供应商分面板勾选、生成跨供应商发送批次；已处理按批次汇总；导出按供应商分文件或打包 zip */
 
-import { listSuppliers, markOrdersSent } from '../core/biz/purchase'
+import { listBatches, listSuppliers, markOrdersSent } from '../core/biz/purchase'
 import { data } from '../core/data'
 import { getCurrentUser } from '../core/auth'
-import type { Order } from '../types'
-import { downloadCSV, moneyText, todayStr } from '../core/utils'
+import type { Order, PurchaseBatch } from '../types'
+import { downloadCSV, downloadZip, moneyText, todayStr } from '../core/utils'
 import type { PageDef } from '../router'
 import { rerender } from '../router'
-import { el, openDialog, renderTabs, tagHtml } from '../ui'
+import { el, openDialog, renderTabs, tagHtml, toast } from '../ui'
 import { pageShell } from '../ui/form'
 import { buildQuery, runGuarded, showResult } from './common'
-import { openDetail as openOrderDetail } from './order'
+import { openDetail as openOrderDetail, renderOrderList, type OrderListView } from './order'
 
-type TabKey = 'pending' | 'done'
+type TabKey = 'external' | 'pending' | 'done'
 
 interface AggregatedItem {
   key: string
@@ -40,18 +40,31 @@ const view = {
   filters: {} as Record<string, string>,
 }
 
+/** 未处理页勾选的订单 id（跨供应商聚合） */
+const selectedOrders = new Set<string>()
+
+/** 外购动物 tab 复用的订单列表状态（锁定 external 类型） */
+const externalView: OrderListView = {
+  tab: 'external',
+  page: 1,
+  pageSize: 10,
+  filters: { code: '', applicant: '', fulfill: '', sent: '' },
+}
+
 export const purchasePage: PageDef = {
   title: '外购汇总',
   render(host: HTMLElement) {
     const page = pageShell(host, {})
 
-    const pending = currentOrders('pending')
-    const done = currentOrders('done')
+    const pendingCount = pendingOrders().length
+    const batches = listBatches().filter((b) => b.labId === getCurrentUser().labId)
+    const externalCount = data().orders.filter((o) => o.kind === 'external' && o.labId === getCurrentUser().labId).length
     renderTabs(
       page,
       [
-        { key: 'pending', text: '未处理', count: pending.length },
-        { key: 'done', text: '已处理', count: done.length },
+        { key: 'pending', text: '未处理', count: pendingCount },
+        { key: 'done', text: '已处理', count: batches.length },
+        { key: 'external', text: '外购动物订单', count: externalCount },
       ],
       view.tab,
       (key) => {
@@ -60,81 +73,127 @@ export const purchasePage: PageDef = {
       },
     )
 
-    const query = buildQuery(
-      [
-        { key: 'supplierId', label: '供应商', type: 'select', options: listSuppliers().map((s) => ({ value: s.id, label: s.name })) },
-        { key: 'code', label: '订单编号', type: 'text' },
-      ],
-      view.filters,
-      (values) => {
-        view.filters = values
-        rerender()
-      },
-      () => {
-        view.filters = {}
-        rerender()
-      },
-    )
-    page.appendChild(query.node)
-
-    const groups = groupBySupplier(filteredOrders())
-
-    const toolbar = el('div', 'toolbar')
-    toolbar.innerHTML =
-      '<div class="toolbar__actions">' +
-      `<button class="btn btn-primary" data-act="export-all">${view.tab === 'pending' ? '导出未处理清单' : '导出已处理清单'}</button>` +
-      '</div>' +
-      `<span class="hint">共 ${groups.reduce((sum, g) => sum + g.orders.length, 0)} 笔订单、${groups.length} 家供应商；同一供应商内按品系合并数量</span>`
-    toolbar.querySelector('button[data-act="export-all"]')?.addEventListener('click', () => {
-      exportAll(groups, view.tab === 'pending' ? '外购未处理清单' : '外购已处理清单')
-    })
-    page.appendChild(toolbar)
-
-    if (!groups.length) {
-      const empty = el('div', 'panel')
-      empty.innerHTML = `<div class="state-area"><p class="state-area__text">${
-        view.tab === 'pending' ? '没有未处理的外购订单' : '还没有已处理的外购订单'
-      }</p></div>`
-      page.appendChild(empty)
+    if (view.tab === 'external') {
+      renderOrderList(page, externalView, { defaultFulfillOnReset: '' })
       return
     }
 
-    for (const group of groups) {
-      page.appendChild(renderSupplierGroup(group))
+    if (view.tab === 'done') {
+      renderDoneTab(page, batches)
+      return
     }
+
+    renderPendingTab(page)
   },
 }
 
-function renderSupplierGroup(group: SupplierGroup): HTMLElement {
+/* ---------------- 未处理 ---------------- */
+
+function renderPendingTab(page: HTMLElement): void {
+  // 清理已发送/不存在的残留勾选
+  for (const id of [...selectedOrders]) {
+    const o = data().orders.find((x) => x.id === id)
+    if (!o || o.fulfillStatus === 'sent') selectedOrders.delete(id)
+  }
+
+  const query = buildQuery(
+    [
+      { key: 'supplierId', label: '供应商', type: 'select', options: listSuppliers().map((s) => ({ value: s.id, label: s.name })) },
+      { key: 'code', label: '订单编号', type: 'text' },
+    ],
+    view.filters,
+    (values) => {
+      view.filters = values
+      rerender()
+    },
+    () => {
+      view.filters = {}
+      rerender()
+    },
+  )
+  page.appendChild(query.node)
+
+  const groups = groupBySupplier(filteredOrders())
+  page.appendChild(renderSubmitToolbar(groups))
+
+  if (!groups.length) {
+    const empty = el('div', 'panel')
+    empty.innerHTML = '<div class="state-area"><p class="state-area__text">没有未处理的外购订单</p></div>'
+    page.appendChild(empty)
+    return
+  }
+
+  for (const group of groups) {
+    page.appendChild(renderPendingGroup(group))
+  }
+}
+
+function renderSubmitToolbar(groups: SupplierGroup[]): HTMLElement {
+  const ids = [...selectedOrders]
+  const supplierCount = new Set(
+    ids
+      .map((id) => {
+        const o = data().orders.find((x) => x.id === id)
+        return o ? supplierIdOf(o) : ''
+      })
+      .filter(Boolean),
+  ).size
+  const toolbar = el('div', 'toolbar')
+  toolbar.innerHTML =
+    '<div class="toolbar__actions">' +
+    `<span class="hint">已勾选 <strong>${ids.length}</strong> 笔订单 · ${supplierCount} 家供应商</span>` +
+    `<button class="btn btn-primary" data-act="submit"${ids.length ? '' : ' disabled'}>生成发送批次</button>` +
+    '</div>' +
+    `<span class="hint">共 ${groups.reduce((sum, g) => sum + g.orders.length, 0)} 笔订单、${groups.length} 家供应商；勾选品系行即可跨供应商汇总发送</span>`
+  toolbar.querySelector('button[data-act="submit"]')?.addEventListener('click', submitBatch)
+  return toolbar
+}
+
+function renderPendingGroup(group: SupplierGroup): HTMLElement {
   const panel = el('div', 'panel panel-table')
   const head = el('div', 'toolbar')
-  const statusTag = view.tab === 'pending' ? tagHtml('未处理', 'warning') : tagHtml('已处理（已发供应商）', 'success')
   head.innerHTML =
     `<div class="toolbar__actions"><strong>${supplierName(group.supplierId)}</strong>` +
-    `<span class="hint">${group.orders.length} 笔订单 · 合计 ${moneyText(group.amountFen)}</span>` +
-    statusTag +
-    '</div>' +
-    `<div class="toolbar__actions"><button class="btn btn-default" data-act="detail">明细</button>` +
-    '<button class="btn btn-default" data-act="export">导出 CSV</button>' +
-    (view.tab === 'pending' ? '<button class="btn btn-primary" data-act="send">标记已处理</button>' : '') +
-    '</div>'
+    `<span class="hint">${group.orders.length} 笔订单 · 合计 ${moneyText(group.amountFen)}</span></div>` +
+    '<div class="toolbar__actions"><button class="btn btn-default" data-act="detail">明细</button></div>'
   panel.appendChild(head)
 
   const rows = group.items
-    .map(
-      (item) =>
-        `<tr><td>${item.itemName}</td><td>${item.spec}</td><td>${item.unit}</td>` +
+    .map((item) => {
+      const all = item.orders.every((o) => selectedOrders.has(o.id))
+      return (
+        `<tr data-key="${item.key}">` +
+        `<td><input type="checkbox" class="item-check" data-key="${item.key}"${all ? ' checked' : ''} aria-label="选择品系"></td>` +
+        `<td>${item.itemName}</td><td>${item.spec}</td><td>${item.unit}</td>` +
         `<td style="text-align:right">${item.quantity}</td>` +
         `<td style="text-align:right">${item.priceFen === null ? '多价' : moneyText(item.priceFen)}</td>` +
         `<td style="text-align:right">${moneyText(item.amountFen)}</td>` +
-        `<td style="text-align:right"><button class="btn-text" data-orders="${item.key}">${item.orderCount}</button></td></tr>`,
-    )
+        `<td style="text-align:right"><button class="btn-text" data-orders="${item.key}">${item.orderCount}</button></td></tr>`
+      )
+    })
     .join('')
   const table = el('div', 'table-wrap')
   table.innerHTML =
-    '<table><thead><tr><th>品系</th><th>规格</th><th>单位</th><th style="text-align:right">数量合计</th><th style="text-align:right">单价（元）</th><th style="text-align:right">金额（元）</th><th style="text-align:right">来源订单数</th></tr></thead>' +
+    '<table><thead><tr><th style="width:40px"><input type="checkbox" class="group-check" aria-label="全选"></th><th>品系</th><th>规格</th><th>单位</th><th style="text-align:right">数量合计</th><th style="text-align:right">单价（元）</th><th style="text-align:right">金额（元）</th><th style="text-align:right">来源订单数</th></tr></thead>' +
     `<tbody>${rows}</tbody></table>`
   panel.appendChild(table)
+
+  const groupCheck = table.querySelector<HTMLInputElement>('input.group-check')
+  groupCheck?.addEventListener('change', () => {
+    if (groupCheck.checked) group.orders.forEach((o) => selectedOrders.add(o.id))
+    else group.orders.forEach((o) => selectedOrders.delete(o.id))
+    rerender()
+  })
+
+  table.querySelectorAll<HTMLInputElement>('input.item-check').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const item = group.items.find((i) => i.key === cb.dataset.key)
+      if (!item) return
+      if (cb.checked) item.orders.forEach((o) => selectedOrders.add(o.id))
+      else item.orders.forEach((o) => selectedOrders.delete(o.id))
+      rerender()
+    })
+  })
 
   table.querySelectorAll<HTMLButtonElement>('button[data-orders]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -143,28 +202,182 @@ function renderSupplierGroup(group: SupplierGroup): HTMLElement {
     })
   })
   head.querySelector('button[data-act="detail"]')?.addEventListener('click', () => openGroupDetail(group))
-  head.querySelector('button[data-act="export"]')?.addEventListener('click', () => exportOneGroup(group))
-  head.querySelector('button[data-act="send"]')?.addEventListener('click', () =>
-    runGuarded('purchase:send', () => {
-      const result = markOrdersSent(group.orders.map((o) => o.id))
-      showResult(result)
-      rerender()
-    }),
-  )
+
   return panel
+}
+
+function submitBatch(): void {
+  if (!selectedOrders.size) {
+    toast('请先勾选要处理的订单', 'warning')
+    return
+  }
+  runGuarded('purchase:send', () => {
+    const orderIds = [...selectedOrders]
+    const result = markOrdersSent(orderIds)
+    if (!result.ok) {
+      showResult(result)
+      return
+    }
+    selectedOrders.clear()
+    showResult(result)
+    if (result.id) openSentResult(result.id)
+    rerender()
+  })
+}
+
+function openSentResult(batchId: string): void {
+  const batch = data().purchaseBatches.find((b) => b.id === batchId)
+  if (!batch) return
+  const orders = data().orders.filter((o) => batch.orderIds.includes(o.id))
+  const groups = groupBySupplier(orders)
+  openDialog({
+    title: '发送完成',
+    bodyHtml: `<p>已生成发送批次，共 <strong>${batch.orderIds.length}</strong> 笔订单、<strong>${batch.supplierIds.length}</strong> 家供应商。</p>
+      <p class="hint">可立即导出，也可稍后在「已处理」中按批次导出。</p>`,
+    actions: [
+      { text: '按供应商导出', onClick: () => exportBySupplier(groups) },
+      { text: '打包 zip 导出', onClick: () => exportZip(groups) },
+      { text: '关闭', primary: true },
+    ],
+  })
+}
+
+/* ---------------- 已处理（按批次） ---------------- */
+
+function renderDoneTab(page: HTMLElement, batches: PurchaseBatch[]): void {
+  if (!batches.length) {
+    const empty = el('div', 'panel')
+    empty.innerHTML = '<div class="state-area"><p class="state-area__text">还没有已处理的外购批次</p></div>'
+    page.appendChild(empty)
+    return
+  }
+  for (const batch of batches) {
+    page.appendChild(renderBatchPanel(batch))
+  }
+}
+
+function renderBatchPanel(batch: PurchaseBatch): HTMLElement {
+  const orders = data().orders.filter((o) => batch.orderIds.includes(o.id))
+  const groups = groupBySupplier(orders)
+  const amount = orders.reduce((sum, o) => sum + orderAmount(o), 0)
+  const supplierNames = batch.supplierIds.map((id) => supplierName(id)).join('、')
+
+  const panel = el('div', 'panel panel-table')
+  const head = el('div', 'toolbar')
+  head.innerHTML =
+    '<div class="toolbar__actions">' +
+    '<strong>发送批次</strong>' +
+    `<span class="hint">${batch.sentAt} · ${batch.operator}</span>` +
+    `<span class="hint">${supplierNames}</span>` +
+    `<span class="hint">${batch.orderIds.length} 笔订单 · 合计 ${moneyText(amount)}</span>` +
+    tagHtml('已处理', 'success') +
+    '</div>' +
+    '<div class="toolbar__actions">' +
+    '<button class="btn btn-default" data-act="detail">明细</button>' +
+    '<button class="btn btn-default" data-act="export">按供应商导出</button>' +
+    '<button class="btn btn-default" data-act="zip">打包 zip</button>' +
+    '</div>'
+  panel.appendChild(head)
+
+  const rows = aggregatedRows(groups)
+    .map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`)
+    .join('')
+  const headerCells = AGG_HEADER.map((h, i) => `<th${i >= 4 ? ' style="text-align:right"' : ''}>${h}</th>`).join('')
+  const table = el('div', 'table-wrap')
+  table.innerHTML =
+    `<table><thead><tr>${headerCells}</tr></thead>` +
+    `<tbody>${rows}</tbody></table>`
+  panel.appendChild(table)
+
+  head.querySelector('button[data-act="detail"]')?.addEventListener('click', () => openBatchDetail(batch))
+  head.querySelector('button[data-act="export"]')?.addEventListener('click', () => exportBySupplier(groups))
+  head.querySelector('button[data-act="zip"]')?.addEventListener('click', () => exportZip(groups))
+
+  return panel
+}
+
+function openBatchDetail(batch: PurchaseBatch): void {
+  const orders = data().orders.filter((o) => batch.orderIds.includes(o.id))
+  const dlg = openDialog({
+    title: `批次明细（${batch.sentAt}）`,
+    bodyHtml: `<table><thead><tr><th>订单编号</th><th>供应商</th><th>品系</th><th>规格</th><th>数量</th><th>申请人</th><th style="text-align:right">金额（元）</th><th>操作</th></tr></thead><tbody>${orders
+      .map(
+        (o) =>
+          `<tr><td>${o.code}</td><td>${supplierName(supplierIdOf(o))}</td><td>${o.itemName}</td><td>${o.spec}</td><td>${o.quantity}${o.unit}</td><td>${o.applicantName}</td><td style="text-align:right">${moneyText(
+            orderAmount(o),
+          )}</td><td><button class="btn-text" data-order-id="${o.id}">详情</button></td></tr>`,
+      )
+      .join('')}</tbody></table>`,
+    wide: true,
+    actions: [{ text: '关闭', primary: true }],
+  })
+  dlg.style.width = 'min(1080px, calc(100vw - 32px))'
+  dlg.querySelectorAll<HTMLButtonElement>('button[data-order-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const order = orders.find((o) => o.id === btn.dataset.orderId)
+      if (order) openOrderDetail(order)
+    })
+  })
+}
+
+/* ---------------- 导出 ---------------- */
+
+const SUPPLIER_HEADER = ['品系', '规格', '单位', '数量', '单价（元）', '金额（元）']
+
+function csvText(header: string[], rows: string[][]): string {
+  return (
+    '\uFEFF' +
+    [header, ...rows]
+      .map((r) => r.map((c) => `"${String(c ?? '').replace(/"/g, '""')}"`).join(','))
+      .join('\r\n')
+  )
+}
+
+function supplierRows(group: SupplierGroup): string[][] {
+  return group.items.map((item) => [
+    item.itemName,
+    item.spec,
+    item.unit,
+    String(item.quantity),
+    item.priceFen === null ? '多价' : (item.priceFen / 100).toFixed(2),
+    (item.amountFen / 100).toFixed(2),
+  ])
+}
+
+/** 按供应商分别导出单个 CSV（一个供应商一个文件） */
+function exportBySupplier(groups: SupplierGroup[]): void {
+  if (!groups.length) {
+    toast('当前没有可导出的数据', 'error')
+    return
+  }
+  groups.forEach((group) => {
+    downloadCSV(`外购清单_${supplierName(group.supplierId)}_${todayStr()}.csv`, SUPPLIER_HEADER, supplierRows(group))
+  })
+}
+
+/** 打包 zip：多供应商合并为一个 zip（一个供应商一个 CSV 文件） */
+function exportZip(groups: SupplierGroup[]): void {
+  if (!groups.length) {
+    toast('当前没有可导出的数据', 'error')
+    return
+  }
+  const files = groups.map((group) => ({
+    name: `外购清单_${supplierName(group.supplierId)}.csv`,
+    content: csvText(SUPPLIER_HEADER, supplierRows(group)),
+  }))
+  downloadZip(`外购清单_${todayStr()}.zip`, files)
 }
 
 /* ---------------- 数据 ---------------- */
 
-function currentOrders(kind: TabKey): Order[] {
-  const all = data().orders.filter((o) => o.kind === 'external' && o.labId === getCurrentUser().labId)
-  return all.filter((o) =>
-    kind === 'done' ? o.fulfillStatus === 'sent' : o.auditStatus === 'approved' && o.fulfillStatus !== 'sent',
-  )
+function pendingOrders(): Order[] {
+  return data()
+    .orders.filter((o) => o.kind === 'external' && o.labId === getCurrentUser().labId)
+    .filter((o) => o.auditStatus === 'approved' && o.fulfillStatus !== 'sent')
 }
 
 function filteredOrders(): Order[] {
-  let list = currentOrders(view.tab)
+  let list = pendingOrders()
   const { supplierId, code } = view.filters
   if (supplierId) list = list.filter((o) => supplierIdOf(o) === supplierId)
   if (code) list = list.filter((o) => o.code.includes(code))
@@ -228,7 +441,7 @@ function aggregateItems(orders: Order[]): AggregatedItem[] {
   return Array.from(map.values())
 }
 
-/* ---------------- 导出与明细 ---------------- */
+/* ---------------- 明细弹窗 ---------------- */
 
 const AGG_HEADER = ['供应商', '品系', '规格', '单位', '数量', '单价（元）', '金额（元）']
 
@@ -244,19 +457,6 @@ function aggregatedRows(groups: SupplierGroup[]): string[][] {
       (item.amountFen / 100).toFixed(2),
     ]),
   )
-}
-
-function exportAll(groups: SupplierGroup[], name: string): void {
-  const rows = aggregatedRows(groups)
-  if (!rows.length) {
-    showResult({ ok: false, message: '当前列表没有可导出的订单' })
-    return
-  }
-  downloadCSV(`${name}_${todayStr()}.csv`, AGG_HEADER, rows)
-}
-
-function exportOneGroup(group: SupplierGroup): void {
-  downloadCSV(`外购清单_${supplierName(group.supplierId)}_${todayStr()}.csv`, AGG_HEADER, aggregatedRows([group]))
 }
 
 function openItemOrders(item: AggregatedItem, supplierId: string): void {

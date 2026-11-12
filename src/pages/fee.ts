@@ -1,19 +1,16 @@
 /** 费用结算：费用明细、学校扣费提交、结果查询与历史 */
 
 import {
-  chargeOutcome,
   feeChargeStatus,
   latestRequest,
   queryResult,
   retryCharge,
-  setChargeOutcome,
   submitCharge,
 } from '../core/biz/fee'
 import { data, scoped } from '../core/data'
 import { KIND_TEXT } from '../core/labels'
-import { moneyText } from '../core/utils'
+import { downloadCSV, moneyText, todayStr } from '../core/utils'
 import type { ChargeRequest, Fee } from '../types'
-import type { ChargeOutcomeMode } from '../core/schoolapi'
 import type { PageDef } from '../router'
 import { currentPath, currentQuery, rerender } from '../router'
 import { el, openDialog, renderTable, renderTabs, tagHtml, toast, type RowAction } from '../ui'
@@ -61,24 +58,26 @@ export const feePage: PageDef = {
       },
     )
 
-    const demoBar = el('div', 'panel toolbar')
-    demoBar.innerHTML = `
-      <div class="toolbar__actions">
-        <span class="hint">扣费返回结果</span>
-        <select id="demo-outcome" style="width:200px">
-          <option value="success">下一次查询：扣费成功</option>
-          <option value="failed">下一次查询：明确失败</option>
-          <option value="unknown">下一次查询：结果暂未知</option>
-        </select>
-      </div>
-    `
-    const sel = demoBar.querySelector('#demo-outcome') as HTMLSelectElement
-    sel.value = chargeOutcome()
-    sel.addEventListener('change', () => {
-      setChargeOutcome(sel.value as ChargeOutcomeMode)
-      toast(`已设置扣费返回结果：${sel.options[sel.selectedIndex].text}`, 'info')
-    })
-    page.appendChild(demoBar)
+    // 演示控件「扣费返回结果」已临时隐藏（模拟学校扣费接口返回结果的下拉框）
+    // 恢复时：取消下方注释，并恢复顶部 chargeOutcome / setChargeOutcome / ChargeOutcomeMode 的 import
+    // const demoBar = el('div', 'panel toolbar')
+    // demoBar.innerHTML = `
+    //   <div class="toolbar__actions">
+    //     <span class="hint">扣费返回结果</span>
+    //     <select id="demo-outcome" style="width:200px">
+    //       <option value="success">下一次查询：扣费成功</option>
+    //       <option value="failed">下一次查询：明确失败</option>
+    //       <option value="unknown">下一次查询：结果暂未知</option>
+    //     </select>
+    //   </div>
+    // `
+    // const sel = demoBar.querySelector('#demo-outcome') as HTMLSelectElement
+    // sel.value = chargeOutcome()
+    // sel.addEventListener('change', () => {
+    //   setChargeOutcome(sel.value as ChargeOutcomeMode)
+    //   toast(`已设置扣费返回结果：${sel.options[sel.selectedIndex].text}`, 'info')
+    // })
+    // page.appendChild(demoBar)
 
     const query = buildQuery(
       [
@@ -128,6 +127,10 @@ function feeRows(): Fee[] {
 
 function renderFees(page: HTMLElement): void {
   const host = el('div', 'panel panel-table')
+  const toolbar = el('div', 'toolbar')
+  toolbar.innerHTML = '<div class="toolbar__actions"><button class="btn btn-default" data-act="export">导出数据</button></div>'
+  toolbar.querySelector('button[data-act="export"]')?.addEventListener('click', () => exportFees())
+  host.appendChild(toolbar)
   renderTable<Fee>(
     host,
     {
@@ -135,16 +138,16 @@ function renderFees(page: HTMLElement): void {
         { key: 'code', title: '关联订单', render: (r) => orderCode(r.orderId) ?? '—' },
         { key: 'kind', title: '业务类型', render: (r) => KIND_TEXT[r.kind] },
         { key: 'title', title: '费用项', ellipsis: true },
-        { key: 'basis', title: '计费依据', ellipsis: true, render: (r) => r.basis },
-        { key: 'period', title: '计费区间', render: (r) => (r.periodStart ? `${r.periodStart} ~ ${r.periodEnd}（结束日不含）` : '—') },
-        { key: 'amount', title: '金额', align: 'right', render: (r) => `<strong>${moneyText(r.amountFen)}</strong>` },
         {
-          key: 'channel',
-          title: '结算渠道',
-          render: (r) => (r.channel === 'external' ? tagHtml('外部结算待确认', 'warning') : tagHtml('校内项目扣费', 'primary')),
+          key: 'period',
+          title: '计费区间',
+          render: (r) =>
+            r.periodStart
+              ? `<span title="${r.periodStart} ~ ${r.periodEnd}（结束日不含）">${r.periodStart} ~ ${r.periodEnd}</span>`
+              : '—',
         },
+        { key: 'amount', title: '金额', align: 'right', render: (r) => `<strong>${moneyText(r.amountFen)}</strong>` },
         { key: 'status', title: '扣费状态', render: (r) => tagHtml(feeChargeStatus(r).text, feeChargeStatus(r).tone) },
-        { key: 'createdAt', title: '生成日期' },
       ],
       rows: feeRows(),
       actions: (row) => {
@@ -187,15 +190,19 @@ function renderFees(page: HTMLElement): void {
 function renderRequests(page: HTMLElement): void {
   const host = el('div', 'panel panel-table')
   const rows = scoped(data().chargeRequests)
+  const toolbar = el('div', 'toolbar')
+  toolbar.innerHTML = '<div class="toolbar__actions"><button class="btn btn-default" data-act="export">导出数据</button></div>'
+  toolbar.querySelector('button[data-act="export"]')?.addEventListener('click', () => exportRequests())
+  host.appendChild(toolbar)
   renderTable<ChargeRequest>(
     host,
     {
       cols: [
-        { key: 'bizSeq', title: '业务流水（幂等）' },
+        { key: 'bizSeq', title: '业务流水' },
         { key: 'order', title: '关联订单', render: (r) => orderCode(r.orderId) ?? '—' },
         { key: 'amount', title: '金额', align: 'right', render: (r) => moneyText(r.amountFen) },
-        { key: 'project', title: '经费项目', render: (r) => projectName(r.projectId) },
-        { key: 'applicant', title: '申请人' },
+        { key: 'project', title: '经费项目', ellipsis: true, render: (r) => projectName(r.projectId) },
+        { key: 'applicant', title: '申请人', render: (r) => r.applicantName || '—' },
         {
           key: 'status',
           title: '状态',
@@ -206,8 +213,6 @@ function renderRequests(page: HTMLElement): void {
                 ? tagHtml('失败', 'danger')
                 : tagHtml('处理中', 'primary'),
         },
-        { key: 'attempts', title: '尝试次数', align: 'right', render: (r) => String(r.attempts.length) },
-        { key: 'schoolSeq', title: '学校流水号', render: (r) => r.schoolSeq ?? '—' },
         { key: 'updatedAt', title: '更新时间' },
       ],
       rows,
@@ -229,6 +234,56 @@ function renderRequests(page: HTMLElement): void {
   )
   page.appendChild(host)
 
+}
+
+/* ---------------- 导出 ---------------- */
+
+function exportFees(): void {
+  const rows = feeRows()
+  if (!rows.length) {
+    toast('当前列表没有可导出的数据', 'error')
+    return
+  }
+  downloadCSV(
+    `费用明细_${todayStr()}.csv`,
+    ['关联订单', '业务类型', '费用项', '计费依据', '计费区间', '金额（元）', '结算渠道', '扣费状态', '生成日期'],
+    rows.map((r) => [
+      orderCode(r.orderId) ?? '—',
+      KIND_TEXT[r.kind],
+      r.title,
+      r.basis,
+      r.periodStart ? `${r.periodStart} ~ ${r.periodEnd}（结束日不含）` : '—',
+      (r.amountFen / 100).toFixed(2),
+      r.channel === 'external' ? '外部结算待确认' : '校内项目扣费',
+      feeChargeStatus(r).text,
+      r.createdAt,
+    ]),
+  )
+  toast(`已导出 ${rows.length} 条`, 'success')
+}
+
+function exportRequests(): void {
+  const rows = scoped(data().chargeRequests)
+  if (!rows.length) {
+    toast('当前列表没有可导出的数据', 'error')
+    return
+  }
+  downloadCSV(
+    `扣费请求_${todayStr()}.csv`,
+    ['业务流水', '关联订单', '金额（元）', '经费项目', '申请人', '状态', '尝试次数', '学校流水号', '更新时间'],
+    rows.map((r) => [
+      r.bizSeq,
+      orderCode(r.orderId) ?? '—',
+      (r.amountFen / 100).toFixed(2),
+      projectName(r.projectId),
+      r.applicantName,
+      r.status === 'success' ? '成功' : r.status === 'failed' ? '失败' : '处理中',
+      String(r.attempts.length),
+      r.schoolSeq ?? '—',
+      r.updatedAt,
+    ]),
+  )
+  toast(`已导出 ${rows.length} 条`, 'success')
 }
 
 /* ---------------- 弹窗 ---------------- */
@@ -261,7 +316,7 @@ function openFeeDetail(fee: Fee): void {
 
 function openSubmit(fee: Fee): void {
   const projects = scoped(data().projects)
-    .filter((p) => p.enabled)
+    .filter((p) => p.status === 'active')
     .map((p) => ({ value: p.id, label: `${p.code} ${p.name}` }))
   const order = data().orders.find((o) => o.id === fee.orderId)
 

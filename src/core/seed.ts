@@ -21,6 +21,7 @@ import type {
   OrderEvent,
   OrderKind,
   Project,
+  ProjectMember,
   PurchaseAnomaly,
   PurchaseBatch,
   Role,
@@ -34,7 +35,7 @@ import type {
   User,
 } from '../types'
 
-export const SEED_VERSION = 21
+export const SEED_VERSION = 30
 
 /** 演示基准日：种子数据围绕该日期编排，保证演示脚本可重复执行 */
 export const DEMO_TODAY = '2026-10-25'
@@ -66,6 +67,7 @@ export const ROUTE_OPTIONS: { path: string; title: string }[] = [
   { path: '/system/menu', title: '菜单管理' },
   { path: '/system/role', title: '角色管理' },
   { path: '/system/user', title: '用户管理' },
+  { path: '/system/project', title: '项目组管理' },
 ]
 
 /** 全部操作权限标识：菜单树中的操作项由这里生成 */
@@ -90,6 +92,7 @@ export const ACTION_OPTIONS: { key: string; title: string; parent: string }[] = 
   { key: 'fee:generate', title: '生成费用', parent: 'm_fee' },
   { key: 'fee:submit', title: '提交学校扣费', parent: 'm_fee' },
   { key: 'system:edit', title: '平台基础维护', parent: 'm_sys_user' },
+  { key: 'project:edit', title: '项目组成员维护', parent: 'm_sys_project' },
 ]
 
 const SEED_MENUS: { id: string; parentId: string | null; title: string; type: MenuNode['type']; path?: string; key?: string; sort: number }[] = [
@@ -118,6 +121,7 @@ const SEED_MENUS: { id: string; parentId: string | null; title: string; type: Me
   { id: 'm_sys_menu', parentId: 'm_g_system', title: '菜单管理', type: 'menu', path: '/system/menu', sort: 1 },
   { id: 'm_sys_role', parentId: 'm_g_system', title: '角色管理', type: 'menu', path: '/system/role', sort: 2 },
   { id: 'm_sys_user', parentId: 'm_g_system', title: '用户管理', type: 'menu', path: '/system/user', sort: 3 },
+  { id: 'm_sys_project', parentId: 'm_g_system', title: '项目组管理', type: 'menu', path: '/system/project', sort: 4 },
 ]
 
 function buildMenus(): MenuNode[] {
@@ -166,6 +170,8 @@ const ADMIN_MENUS = [
   'm_cage',
   'm_g_fee',
   'm_fee',
+  'm_g_system',
+  'm_sys_project',
 ]
 
 const ADMIN_ACTIONS = [
@@ -188,6 +194,7 @@ const ADMIN_ACTIONS = [
   'cage:edit',
   'fee:generate',
   'fee:submit',
+  'project:edit',
 ]
 
 const ROLES: Role[] = [
@@ -228,8 +235,8 @@ const ROLES: Role[] = [
     enabled: true,
     protected: false,
     labIds: LABS.map((l) => l.id),
-    menuIds: ['m_g_main', 'm_dashboard', 'm_g_service', 'm_service', 'm_order'],
-    actionKeys: ['order:create'],
+    menuIds: ['m_g_main', 'm_dashboard', 'm_g_service', 'm_service', 'm_order', 'm_g_system', 'm_sys_project'],
+    actionKeys: ['order:create', 'project:edit'],
   },
 ]
 
@@ -304,6 +311,7 @@ function servicesFor(labId: string, prefix: string, km: number, sd: number, cage
       unitPriceFen: km,
       auditMode: 'system',
       onSale: true,
+      iacucRequired: true,
       applyNote: '需填写课题编号与动物数量，提交后由中心在本系统内确认',
       updatedAt: DEMO_TODAY,
       stockItemId: `st_${prefix}_km`,
@@ -318,6 +326,7 @@ function servicesFor(labId: string, prefix: string, km: number, sd: number, cage
       unitPriceFen: sd,
       auditMode: 'system',
       onSale: true,
+      iacucRequired: true,
       applyNote: '大鼠需说明饲养笼位需求',
       updatedAt: DEMO_TODAY,
       stockItemId: `st_${prefix}_sd`,
@@ -332,6 +341,7 @@ function servicesFor(labId: string, prefix: string, km: number, sd: number, cage
       unitPriceFen: Math.round(km * 0.6),
       auditMode: 'none',
       onSale: true,
+      iacucRequired: false,
       applyNote: '提交后直接进入待出库',
       updatedAt: DEMO_TODAY,
       stockItemId: `st_${prefix}_wt`,
@@ -346,6 +356,7 @@ function servicesFor(labId: string, prefix: string, km: number, sd: number, cage
       unitPriceFen: 4800,
       auditMode: 'system',
       onSale: true,
+      iacucRequired: true,
       applyNote: '外部供应商集采代报，每周一/周四统一发厂商，厂商送货直接电话联系学生交接',
       updatedAt: DEMO_TODAY,
       supplierId: `su_${prefix}_1`,
@@ -361,6 +372,7 @@ function servicesFor(labId: string, prefix: string, km: number, sd: number, cage
       unitPriceFen: 8500,
       auditMode: 'system',
       onSale: true,
+      iacucRequired: true,
       applyNote: '特种免疫缺陷品系，每周固定向北京斯贝福批量统购直送',
       updatedAt: DEMO_TODAY,
       supplierId: `su_${prefix}_2`,
@@ -376,6 +388,7 @@ function servicesFor(labId: string, prefix: string, km: number, sd: number, cage
       unitPriceFen: 4500,
       auditMode: 'system',
       onSale: true,
+      iacucRequired: true,
       applyNote: '外部供应商集采代报，按供应商汇总后统一发厂商',
       updatedAt: DEMO_TODAY,
       supplierId: `su_${prefix}_1`,
@@ -391,6 +404,7 @@ function servicesFor(labId: string, prefix: string, km: number, sd: number, cage
       unitPriceFen: 12000,
       auditMode: 'system',
       onSale: true,
+      iacucRequired: true,
       applyNote: '外部供应商集采代报，按供应商汇总后统一发厂商',
       updatedAt: DEMO_TODAY,
       supplierId: `su_${prefix}_1`,
@@ -406,6 +420,7 @@ function servicesFor(labId: string, prefix: string, km: number, sd: number, cage
       unitPriceFen: 12500,
       auditMode: 'system',
       onSale: true,
+      iacucRequired: true,
       applyNote: '西南片区应急现货调拨服务商直供',
       updatedAt: DEMO_TODAY,
       supplierId: `su_${prefix}_3`,
@@ -421,6 +436,7 @@ function servicesFor(labId: string, prefix: string, km: number, sd: number, cage
       unitPriceFen: cage,
       auditMode: 'system',
       onSale: true,
+      iacucRequired: true,
       applyNote: '费用按“占用笼位数 × 天数 × 单价”分段累计，开始日含、结束日不含',
       updatedAt: DEMO_TODAY,
     },
@@ -434,6 +450,7 @@ function servicesFor(labId: string, prefix: string, km: number, sd: number, cage
       unitPriceFen: Math.round(cage * 0.8),
       auditMode: 'hall',
       onSale: true,
+      iacucRequired: true,
       applyNote: '服务大厅审批通过后进入待出库',
       updatedAt: DEMO_TODAY,
     },
@@ -447,6 +464,7 @@ function servicesFor(labId: string, prefix: string, km: number, sd: number, cage
       unitPriceFen: 32000,
       auditMode: 'system',
       onSale: false,
+      iacucRequired: true,
       applyNote: '下架后不出现在新订单可选服务中',
       updatedAt: DEMO_TODAY,
     },
@@ -868,7 +886,10 @@ function projectsFor(labId: string, prefix: string): Project[] {
       code: 'XM-2026-01',
       name: '肿瘤模型的影像学评价',
       owner: '孙老师',
-      enabled: true,
+      fundSource: '国家自然科学基金',
+      totalBudgetFen: 50000000,
+      spentFen: 12000000,
+      status: 'active',
     },
     {
       id: `pj_${prefix}_2`,
@@ -876,16 +897,43 @@ function projectsFor(labId: string, prefix: string): Project[] {
       code: 'XM-2026-02',
       name: '代谢性疾病动物模型',
       owner: '孙老师',
-      enabled: true,
+      fundSource: '贵州省科技计划项目',
+      totalBudgetFen: 30000000,
+      spentFen: 6000000,
+      status: 'active',
     },
     {
       id: `pj_${prefix}_3`,
       labId,
       code: 'XM-2025-09',
-      name: '已结题专项（停用）',
-      owner: '负责人',
-      enabled: false,
+      name: '早期肿瘤标志物筛查（已结题）',
+      owner: '周老师',
+      fundSource: '校级科研启动经费',
+      totalBudgetFen: 8000000,
+      spentFen: 8000000,
+      status: 'ended',
     },
+    {
+      id: `pj_${prefix}_4`,
+      labId,
+      code: 'XM-2026-03',
+      name: '神经退行性疾病机制研究',
+      owner: '孙老师',
+      fundSource: '企业横向课题',
+      totalBudgetFen: 20000000,
+      spentFen: 0,
+      status: 'paused',
+    },
+  ]
+}
+
+function projectMembersFor(labId: string, prefix: string, projects: Project[]): ProjectMember[] {
+  const pj1 = projects.find((p) => p.code === 'XM-2026-01')
+  const pj2 = projects.find((p) => p.code === 'XM-2026-02')
+  return [
+    { id: `pm_${prefix}_1`, labId, projectId: pj1?.id ?? '', name: '张立', no: '202409012', org: '基础医学院', createdAt: '2026-10-01' },
+    { id: `pm_${prefix}_2`, labId, projectId: pj1?.id ?? '', name: '黄同学', no: '202409015', org: '基础医学院', createdAt: '2026-10-02' },
+    { id: `pm_${prefix}_3`, labId, projectId: pj2?.id ?? '', name: '刘同学', no: '202409020', org: '基础医学院', createdAt: '2026-10-05' },
   ]
 }
 
@@ -913,6 +961,9 @@ interface SeedOrder {
   source: Order['source']
   applicantName: string
   applicantOrg: string
+  applicantNo?: string
+  applicantPhone?: string
+  college?: string
   externalCustomerId?: string
   stockItemId?: string
   supplierId?: string
@@ -972,6 +1023,9 @@ function historyOrders(labId: string, prefix: string, sv: Service[], pj: Project
       source: 'user',
       applicantName: '学生·林同学',
       applicantOrg: '基础医学院课题组',
+      applicantNo: '202409002',
+      applicantPhone: '13800000002',
+      college: '基础医学院',
       stockItemId: st.find((x) => x.id === `st_${prefix}_km`)!.id,
       projectId: pj[0].id,
       remark: '历史订单：出库流水「查看订单」关联用',
@@ -1000,6 +1054,9 @@ function historyOrders(labId: string, prefix: string, sv: Service[], pj: Project
       source: 'user',
       applicantName: '教师·郑老师',
       applicantOrg: '公共卫生学院课题组',
+      applicantNo: 'T2023002',
+      applicantPhone: '13900000002',
+      college: '公共卫生学院',
       stockItemId: st.find((x) => x.id === `st_${prefix}_km`)!.id,
       projectId: pj[0].id,
       remark: '历史订单：出库流水「查看订单」关联用',
@@ -1028,6 +1085,9 @@ function historyOrders(labId: string, prefix: string, sv: Service[], pj: Project
       source: 'user',
       applicantName: '教师·冯老师',
       applicantOrg: '基础医学院教学组',
+      applicantNo: 'T2023003',
+      applicantPhone: '13900000003',
+      college: '基础医学院',
       stockItemId: st.find((x) => x.id === `st_${prefix}_sd`)!.id,
       projectId: pj[0].id,
       remark: '历史订单：出库流水「查看订单」关联用',
@@ -1056,6 +1116,9 @@ function historyOrders(labId: string, prefix: string, sv: Service[], pj: Project
       source: 'user',
       applicantName: '学生·吴同学',
       applicantOrg: '药学院课题组',
+      applicantNo: '202409003',
+      applicantPhone: '13800000003',
+      college: '药学院',
       stockItemId: st.find((x) => x.id === `st_${prefix}_wt`)!.id,
       projectId: pj[0].id,
       remark: '历史订单：出库流水「查看订单」关联用',
@@ -1106,6 +1169,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '学生·陈同学',
       applicantOrg: '基础医学院课题组',
+      applicantNo: '202409001',
+      applicantPhone: '13800000001',
+      college: '基础医学院',
       stockItemId: item(`st_${prefix}_km`).id,
       projectId: pj[0].id,
       expectDate: '2026-10-28',
@@ -1131,6 +1197,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '学生·林同学',
       applicantOrg: '公共卫生学院课题组',
+      applicantNo: '202409002',
+      applicantPhone: '13800000002',
+      college: '公共卫生学院',
       stockItemId: item(`st_${prefix}_wt`).id,
       projectId: pj[1].id,
       createdAt: '2026-10-20',
@@ -1154,6 +1223,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '教师·吴老师',
       applicantOrg: '药学院课题组',
+      applicantNo: 'T2023001',
+      applicantPhone: '13900000001',
+      college: '药学院',
       stockItemId: item(`st_${prefix}_sd`).id,
       projectId: pj[0].id,
       createdAt: '2026-10-18',
@@ -1180,6 +1252,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '教师·郑老师',
       applicantOrg: '基础医学院课题组',
+      applicantNo: 'T2023002',
+      applicantPhone: '13900000002',
+      college: '基础医学院',
       stockItemId: item(`st_${prefix}_km`).id,
       projectId: pj[1].id,
       createdAt: '2026-10-15',
@@ -1208,6 +1283,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '学生·唐同学',
       applicantOrg: '基础医学院课题组',
+      applicantNo: '202409004',
+      applicantPhone: '13800000004',
+      college: '基础医学院',
       stockItemId: item(`st_${prefix}_km`).id,
       projectId: pj[0].id,
       createdAt: '2026-10-12',
@@ -1236,6 +1314,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '学生·黄同学',
       applicantOrg: '附属医院科室',
+      applicantNo: '202409005',
+      applicantPhone: '13800000005',
+      college: '附属医院',
       externalCustomerId: cu[0].id,
       supplierId: `su_${prefix}_1`,
       expectDate: '2026-11-05',
@@ -1261,6 +1342,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '教师·钱老师',
       applicantOrg: '口腔医学院课题组',
+      applicantNo: 'T2023004',
+      applicantPhone: '13900000004',
+      college: '口腔医学院',
       externalCustomerId: cu[1].id,
       supplierId: `su_${prefix}_1`,
       createdAt: '2026-10-21',
@@ -1312,6 +1396,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '学生·冯同学',
       applicantOrg: '护理学院课题组',
+      applicantNo: '202409006',
+      applicantPhone: '13800000006',
+      college: '护理学院',
       externalCustomerId: cu[1].id,
       supplierId: `su_${prefix}_1`,
       rejectReason: '申请的规格需另行确认后再提交',
@@ -1336,6 +1423,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '学生·许同学',
       applicantOrg: '基础医学院课题组',
+      applicantNo: '202409007',
+      applicantPhone: '13800000007',
+      college: '基础医学院',
       externalCustomerId: cu[0].id,
       supplierId: `su_${prefix}_1`,
       createdAt: '2026-10-23',
@@ -1359,6 +1449,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '学生·何同学',
       applicantOrg: '药学院课题组',
+      applicantNo: '202409008',
+      applicantPhone: '13800000008',
+      college: '药学院',
       externalCustomerId: cu[1].id,
       supplierId: `su_${prefix}_1`,
       createdAt: '2026-10-23',
@@ -1382,6 +1475,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '学生·邓同学',
       applicantOrg: '公共卫生学院课题组',
+      applicantNo: '202409009',
+      applicantPhone: '13800000009',
+      college: '公共卫生学院',
       externalCustomerId: cu[0].id,
       supplierId: `su_${prefix}_3`,
       createdAt: '2026-10-24',
@@ -1405,6 +1501,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '教师·韩老师',
       applicantOrg: '口腔医学院课题组',
+      applicantNo: 'T2023005',
+      applicantPhone: '13900000005',
+      college: '口腔医学院',
       externalCustomerId: cu[1].id,
       supplierId: `su_${prefix}_1`,
       createdAt: '2026-10-24',
@@ -1428,6 +1527,9 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       source: 'user',
       applicantName: '学生·罗同学',
       applicantOrg: '基础医学院课题组',
+      applicantNo: '202409010',
+      applicantPhone: '13800000010',
+      college: '基础医学院',
       externalCustomerId: cu[0].id,
       supplierId: `su_${prefix}_2`,
       createdAt: '2026-10-24',
@@ -1456,6 +1558,7 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       expectEndDate: addDays(todayStr(), 15),
       source: 'user',
       applicantName: '学生·孙同学',
+      applicantNo: '202409011',
       applicantOrg: '基础医学院课题组',
       projectId: pj[0].id,
       expectDate: addDays(todayStr(), 1),
@@ -1486,6 +1589,7 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       fulfillStatus: 'breeding',
       source: 'user',
       applicantName: '教师·李老师',
+      applicantNo: 'T2023006',
       applicantOrg: '公共卫生学院课题组',
       projectId: pj[1].id,
       createdAt: '2026-10-19',
@@ -1507,12 +1611,14 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       spec: breed.spec,
       unit: breed.unit,
       quantity: 12,
+      feedDays: 14,
       unitPriceFen: breed.unitPriceFen,
       auditMode: 'system',
       auditStatus: 'approved',
       fulfillStatus: 'exited',
       source: 'user',
       applicantName: '教师·何老师',
+      applicantNo: 'T2023007',
       applicantOrg: '基础医学院课题组',
       projectId: pj[0].id,
       createdAt: '2026-09-28',
@@ -1541,6 +1647,7 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       fulfillStatus: 'incoming',
       source: 'user',
       applicantName: '学生·许同学',
+      applicantNo: '202409012',
       applicantOrg: '继续教育学院班',
       createdAt: '2026-10-22',
       history: [ev('2026-10-22', '许同学', '提交寄养申请', '服务大厅审批：通过／退回')],
@@ -1572,6 +1679,7 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       fulfillStatus: 'incoming',
       source: 'user',
       applicantName: '学生·赵同学',
+      applicantNo: '202409013',
       applicantOrg: '药学院新药创制课题组',
       projectId: pj[0].id,
       expectDate: todayStr(),
@@ -1609,6 +1717,7 @@ function orderSeedFor(labId: string, prefix: string, sv: Service[], pj: Project[
       fulfillStatus: 'incoming',
       source: 'user',
       applicantName: '学生·钱同学',
+      applicantNo: '202409014',
       applicantOrg: '法医学系毒理教研室',
       projectId: pj[0].id,
       expectDate: addDays(todayStr(), -4),
@@ -1638,12 +1747,14 @@ function seedFeedings(labId: string, prefix: string, ords: Order[]): { feedings:
       labId,
       orderId: b2.id,
       animalName: b2.itemName,
-      spec: '小鼠 20 只',
-      quantity: 20,
+      spec: '小鼠 10 只',
+      quantity: 10,
       unitPriceFen: b2.unitPriceFen,
+      feedDays: 30,
       status: 'breeding',
       entryAt: '2026-10-20',
       cageIds: [`cg_${prefix}_a1`, `cg_${prefix}_a2`],
+      cageCounts: { [`cg_${prefix}_a1`]: 5, [`cg_${prefix}_a2`]: 5 },
       changeLogs: [
         {
           at: '2026-11-02',
@@ -1663,6 +1774,7 @@ function seedFeedings(labId: string, prefix: string, ords: Order[]): { feedings:
       spec: '小鼠 12 只',
       quantity: 12,
       unitPriceFen: b3.unitPriceFen,
+      feedDays: 14,
       status: 'exited',
       entryAt: '2026-10-01',
       exitAt: '2026-10-05',
@@ -1767,6 +1879,7 @@ export function createSeedData(): DemoData {
   const customers: Customer[] = []
   const suppliers: Supplier[] = []
   const projects: Project[] = []
+  const projectMembers: ProjectMember[] = []
   const services: Service[] = []
   const feedings: Feeding[] = []
   const occupancies: CageOccupancy[] = []
@@ -1784,6 +1897,7 @@ export function createSeedData(): DemoData {
     const sui = supplierItemsFor(labId, prefix, supplierItemSeq)
     supplierItemSeq += sui.length
     const pj = projectsFor(labId, prefix)
+    const pm = projectMembersFor(labId, prefix, pj)
     const ords = [...orderSeedFor(labId, prefix, sv, pj, cu, st), ...historyOrders(labId, prefix, sv, pj, st)]
     const fd = seedFeedings(labId, prefix, ords)
 
@@ -1797,6 +1911,7 @@ export function createSeedData(): DemoData {
     suppliers.push(...su)
     supplierItems.push(...sui)
     projects.push(...pj)
+    projectMembers.push(...pm)
     orders.push(...ords)
     feedings.push(...fd.feedings)
     occupancies.push(...fd.occupancies)
@@ -1807,7 +1922,7 @@ export function createSeedData(): DemoData {
     purchaseBatches.push({
       id: `pb_${prefix}_1`,
       labId,
-      supplierId: su[0].id,
+      supplierIds: [su[0].id],
       orderIds: [`or_${prefix}_e3`],
       status: 'sent',
       operator: '李动物',
@@ -1862,8 +1977,11 @@ export function createSeedData(): DemoData {
     anomalies,
     cages,
     occupancies,
+    reservations: [],
     feedings,
     projects,
+    projectMembers,
+    serviceCalls: [],
     fees,
     chargeRequests,
     logs: [],
